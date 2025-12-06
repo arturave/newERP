@@ -564,7 +564,21 @@ class DetailedPartsPanel(ctk.CTkFrame):
         # Globalne ustawienia
         self.calc_with_material_var = ctk.BooleanVar(value=True)
 
+        # Załaduj cenniki z PricingTables
+        self.pricing_tables = None
+        self._load_pricing_tables()
+
         self._setup_ui()
+
+    def _load_pricing_tables(self):
+        """Załaduj cenniki z modułu pricing"""
+        try:
+            from quotations.pricing.pricing_tables import get_pricing_tables
+            self.pricing_tables = get_pricing_tables()
+            logger.info("[DetailedParts] Pricing tables loaded successfully")
+        except Exception as e:
+            logger.warning(f"[DetailedParts] Could not load pricing tables: {e}")
+            self.pricing_tables = None
 
     def _setup_ui(self):
         """Buduj interfejs"""
@@ -1180,10 +1194,26 @@ class DetailedPartsPanel(ctk.CTkFrame):
         """Pobierz cenę cięcia z cennika [PLN/m]"""
         material = material.upper()
 
-        # Znajdź odpowiedni cennik materiału
+        # Spróbuj pobrać z PricingTables
+        if self.pricing_tables:
+            try:
+                # Określ typ materiału
+                if material.startswith('1.4') or 'INOX' in material:
+                    material_type = 'stainless'
+                elif material in ['AL', 'ALU', 'ALUMINIUM'] or material.startswith('AL'):
+                    material_type = 'aluminum'
+                else:
+                    material_type = 'steel'
+
+                cutting_rate = self.pricing_tables.get_cutting_rate(material_type, thickness)
+                if cutting_rate:
+                    return cutting_rate.cost_per_meter
+            except Exception as e:
+                logger.debug(f"Could not get cutting price from pricing_tables: {e}")
+
+        # Fallback do domyślnych cen
         price_table = self.CUTTING_PRICES.get(material)
         if not price_table:
-            # Sprawdź czy to INOX
             if material.startswith('1.4') or 'INOX' in material:
                 price_table = self.CUTTING_PRICES.get('1.4301', self.CUTTING_PRICES['DEFAULT'])
             else:
@@ -1199,10 +1229,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
         """
         Oblicz koszt L+M (Laser + Material) dla detalu.
 
-        Materiał: koszt z prostokąta otaczającego (bounding box)
+        Materiał: koszt z prostokąta otaczającego (bounding box) wg cennika
         Cięcie: koszt na bazie długości cięcia z cenników
         Grawer: koszt z długości graweru
-        Folia: koszt odparowania z powierzchni
+        Folia: koszt odparowania z powierzchni (tylko dla INOX ≤5mm)
         """
         material = part_data.get('material', '').upper()
         thickness = float(part_data.get('thickness', 0) or 0)
@@ -1214,11 +1244,13 @@ class DetailedPartsPanel(ctk.CTkFrame):
         engraving_len_mm = float(part_data.get('engraving_len', 0) or 0)
 
         # === KOSZT MATERIAŁU z bounding box ===
+        # Oblicz wagę z bounding box
         weight_kg = self._calculate_weight_from_bounding_box(part_data)
         if weight_kg > 0:
             part_data['weight'] = round(weight_kg, 3)
 
-        mat_price = self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
+        # Pobierz cenę materiału z cennika lub użyj domyślnej
+        mat_price = self._get_material_price(material, thickness)
         material_cost = weight_kg * mat_price
 
         # === KOSZT CIĘCIA z cennika ===
@@ -1228,12 +1260,17 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
         # === KOSZT GRAWERU ===
         engraving_len_m = engraving_len_mm / 1000.0
-        engraving_cost = engraving_len_m * self.ENGRAVING_PRICE
+        engraving_price = self._get_engraving_price()
+        engraving_cost = engraving_len_m * engraving_price
 
         # === KOSZT ODPAROWANIA FOLII ===
-        # Oblicz z powierzchni bounding box
-        area_m2 = (width_mm * height_mm) / 1e6 if width_mm > 0 and height_mm > 0 else 0
-        foil_cost = area_m2 * self.FOIL_REMOVAL_PRICE
+        # Tylko dla INOX (1.4xxx) o grubości ≤5mm
+        foil_cost = 0.0
+        is_inox = material.startswith('1.4') or 'INOX' in material
+        if is_inox and thickness <= 5.0:
+            area_m2 = (width_mm * height_mm) / 1e6 if width_mm > 0 and height_mm > 0 else 0
+            foil_price = self._get_foil_removal_price(material, thickness)
+            foil_cost = area_m2 * foil_price
 
         total_lm = material_cost + cutting_cost + engraving_cost + foil_cost
 
@@ -1241,6 +1278,39 @@ class DetailedPartsPanel(ctk.CTkFrame):
                     f"cut={cutting_cost:.2f}, engr={engraving_cost:.2f}, foil={foil_cost:.2f} = {total_lm:.2f}")
 
         return total_lm
+
+    def _get_material_price(self, material: str, thickness: float) -> float:
+        """Pobierz cenę materiału z cennika [PLN/kg]"""
+        material = material.upper()
+
+        # Spróbuj pobrać z PricingTables
+        if self.pricing_tables:
+            try:
+                mat_price = self.pricing_tables.get_material_price(material, thickness)
+                if mat_price:
+                    return mat_price.price_per_kg
+            except Exception as e:
+                logger.debug(f"Could not get price from pricing_tables: {e}")
+
+        # Fallback do domyślnych cen
+        return self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
+
+    def _get_engraving_price(self) -> float:
+        """Pobierz cenę graweru [PLN/m]"""
+        if self.pricing_tables and hasattr(self.pricing_tables, 'engraving_price_per_m'):
+            return self.pricing_tables.engraving_price_per_m
+        return self.ENGRAVING_PRICE
+
+    def _get_foil_removal_price(self, material: str, thickness: float) -> float:
+        """Pobierz cenę usuwania folii [PLN/m²]"""
+        if self.pricing_tables:
+            try:
+                foil_rate = self.pricing_tables.get_foil_removal_rate(material, thickness)
+                if foil_rate:
+                    return foil_rate.get('price_per_m2', self.FOIL_REMOVAL_PRICE)
+            except Exception:
+                pass
+        return self.FOIL_REMOVAL_PRICE
 
     # === PUBLIC API ===
 
