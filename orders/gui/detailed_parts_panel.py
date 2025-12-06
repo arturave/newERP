@@ -749,9 +749,17 @@ class DetailedPartsPanel(ctk.CTkFrame):
         try:
             if column in ["quantity", "bends"]:
                 self.parts_data[idx][column] = int(new_value)
+                # Jeśli zmieniono ilość gięć, zresetuj flagę manualnego kosztu gięć
+                if column == "bends":
+                    self.parts_data[idx]['_manual_bending_cost'] = False
             elif column in ["thickness", "lm_cost", "bending_cost", "additional",
                             "weight", "cutting_len"]:
                 self.parts_data[idx][column] = float(new_value.replace(",", "."))
+                # Oznacz ręcznie edytowane koszty
+                if column == "lm_cost":
+                    self.parts_data[idx]['_manual_lm_cost'] = True
+                elif column == "bending_cost":
+                    self.parts_data[idx]['_manual_bending_cost'] = True
             elif column == "calc_mat":
                 # Toggle material calculation
                 self.parts_data[idx]['calc_with_material'] = new_value.lower() in ['1', 'true', 'yes', 'tak']
@@ -761,8 +769,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
             logger.warning(f"Invalid value for {column}: {new_value}")
             return
 
-        self._recalculate_part(idx)
-        # _update_summary() jest już wywoływane w _recalculate_all()
+        # Aktualizuj tylko total bez nadpisywania ręcznych wartości
+        self._update_total_only(idx)
+        self._update_row(idx)
+        self._update_summary()
 
     def _find_part_index(self, item_id: str) -> Optional[int]:
         """Znajdz indeks czesci po ID wiersza"""
@@ -781,6 +791,14 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
     # Cena za jedno gięcie [PLN]
     BEND_PRICE = 3.0
+
+    def _update_total_only(self, idx: int):
+        """Aktualizuj tylko total_unit bez nadpisywania ręcznych wartości L+M i Bend$"""
+        part = self.parts_data[idx]
+        lm_cost = float(part.get('lm_cost', 0) or 0)
+        bending_cost = float(part.get('bending_cost', 0) or 0)
+        additional = float(part.get('additional', 0) or 0)
+        part['total_unit'] = lm_cost + bending_cost + additional
 
     def _recalculate_part(self, idx: int):
         """Przelicz koszty dla detalu - wywołuje pełne przeliczenie z alokacją"""
@@ -815,79 +833,96 @@ class DetailedPartsPanel(ctk.CTkFrame):
         self._update_summary()
 
     def _recalculate_part_base(self, idx: int):
-        """Oblicz bazowe koszty dla detalu (bez alokacji)"""
+        """Oblicz bazowe koszty dla detalu (bez alokacji) - respektuje manualne wartości"""
         part = self.parts_data[idx]
 
-        # Oblicz L+M cost
-        lm_cost = self._calculate_lm_cost(part)
-        part['lm_cost'] = lm_cost
-        part['base_lm_cost'] = lm_cost  # Zachowaj bazowy koszt
+        # Oblicz L+M cost - tylko jeśli nie było ręcznie ustawione
+        if not part.get('_manual_lm_cost', False):
+            lm_cost = self._calculate_lm_cost(part)
+            # Jesli nie kalkulujemy z materialem - odejmij koszt materialu
+            if not part.get('calc_with_material', True):
+                material = part.get('material', '').upper()
+                weight_kg = float(part.get('weight', 0) or 0)
+                mat_price = self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
+                material_cost = weight_kg * mat_price
+                lm_cost = max(0, lm_cost - material_cost)
+            part['lm_cost'] = lm_cost
+            part['base_lm_cost'] = lm_cost
+        else:
+            # Użyj ręcznie ustawionej wartości
+            lm_cost = float(part.get('lm_cost', 0) or 0)
+            part['base_lm_cost'] = lm_cost
 
-        # Przelicz koszt gięć
-        bends = int(part.get('bends', 0) or 0)
-        bending_cost = bends * self.BEND_PRICE
-        part['bending_cost'] = bending_cost
+        # Przelicz koszt gięć - tylko jeśli nie było ręcznie ustawione
+        if not part.get('_manual_bending_cost', False):
+            bends = int(part.get('bends', 0) or 0)
+            bending_cost = bends * self.BEND_PRICE
+            part['bending_cost'] = bending_cost
+        else:
+            bending_cost = float(part.get('bending_cost', 0) or 0)
 
         additional = float(part.get('additional', 0) or 0)
-
-        # Jesli nie kalkulujemy z materialem - odejmij koszt materialu z L+M
-        if not part.get('calc_with_material', True):
-            material = part.get('material', '').upper()
-            weight_kg = float(part.get('weight', 0) or 0)
-            mat_price = self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
-            material_cost = weight_kg * mat_price
-            lm_cost = max(0, lm_cost - material_cost)
-            part['lm_cost'] = lm_cost
-
         total_unit = lm_cost + bending_cost + additional
         part['total_unit'] = total_unit
 
     def _apply_unit_allocation(self):
-        """Jednostkowy: równy podział kosztów między wszystkie detale"""
+        """Jednostkowy: równy podział kosztów między wszystkie detale (tylko nie-manualne)"""
         if not self.parts_data:
             return
 
-        # Oblicz sumę wszystkich kosztów L+M
-        total_lm = sum(float(p.get('lm_cost', 0) or 0) for p in self.parts_data)
-        num_parts = len(self.parts_data)
+        # Oblicz sumę kosztów L+M tylko dla nie-manualnych detali
+        non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
+        if not non_manual_parts:
+            # Wszystkie są manualne - tylko aktualizuj total
+            for part in self.parts_data:
+                lm_cost = float(part.get('lm_cost', 0) or 0)
+                bending_cost = float(part.get('bending_cost', 0) or 0)
+                additional = float(part.get('additional', 0) or 0)
+                part['total_unit'] = lm_cost + bending_cost + additional
+            return
 
-        # Równy podział
+        total_lm = sum(float(p.get('lm_cost', 0) or 0) for p in non_manual_parts)
+        num_parts = len(non_manual_parts)
         equal_lm = total_lm / num_parts if num_parts > 0 else 0
 
         logger.info(f"[Alokacja Jednostkowa] Suma L+M: {total_lm:.2f}, "
-                   f"Liczba detali: {num_parts}, Koszt/detal: {equal_lm:.2f}")
+                   f"Detali (nie-manualnych): {num_parts}, Koszt/detal: {equal_lm:.2f}")
 
         for part in self.parts_data:
-            part['lm_cost'] = equal_lm
+            # Nie zmieniaj manualnych wartości L+M
+            if not part.get('_manual_lm_cost', False):
+                part['lm_cost'] = equal_lm
+            lm_cost = float(part.get('lm_cost', 0) or 0)
             bending_cost = float(part.get('bending_cost', 0) or 0)
             additional = float(part.get('additional', 0) or 0)
-            part['total_unit'] = equal_lm + bending_cost + additional
+            part['total_unit'] = lm_cost + bending_cost + additional
 
     def _apply_per_sheet_allocation(self):
-        """Na arkusz: każdy detal ponosi pełny koszt materiału arkusza"""
+        """Na arkusz: każdy detal ponosi pełny koszt materiału arkusza (respektuje manualne)"""
         if not self.parts_data:
             return
 
-        # Dla każdego detalu - koszt jak dla pełnego arkusza
-        # Używamy największego detalu jako referencji lub szacujemy koszt arkusza
-        max_lm = max(float(p.get('base_lm_cost', 0) or 0) for p in self.parts_data)
+        # Używamy największego bazowego kosztu jako referencji
+        non_manual_costs = [float(p.get('base_lm_cost', 0) or 0)
+                           for p in self.parts_data if not p.get('_manual_lm_cost', False)]
+        max_lm = max(non_manual_costs) if non_manual_costs else 0
 
-        # Mnożnik dla kosztu arkusza (zakładamy ~30% wykorzystania średnio)
-        # więc koszt arkusza = koszt_detalu / 0.3 = koszt_detalu * 3.33
-        # Ale upraszczamy: każdy detal = max_koszt * 1.5
-        sheet_multiplier = 2.0  # Każdy detal ponosi podwójny koszt (jak na pół arkusza)
+        # Mnożnik dla kosztu arkusza
+        sheet_multiplier = 2.0  # Każdy detal ponosi podwójny koszt
 
         logger.info(f"[Alokacja Na Arkusz] Max L+M: {max_lm:.2f}, Mnożnik: {sheet_multiplier}")
 
         for part in self.parts_data:
-            base_lm = float(part.get('base_lm_cost', 0) or 0)
-            # Koszt = bazowy * mnożnik (symulacja pełnego arkusza)
-            adjusted_lm = base_lm * sheet_multiplier
-            part['lm_cost'] = adjusted_lm
+            # Nie zmieniaj manualnych wartości L+M
+            if not part.get('_manual_lm_cost', False):
+                base_lm = float(part.get('base_lm_cost', 0) or 0)
+                adjusted_lm = base_lm * sheet_multiplier
+                part['lm_cost'] = adjusted_lm
 
+            lm_cost = float(part.get('lm_cost', 0) or 0)
             bending_cost = float(part.get('bending_cost', 0) or 0)
             additional = float(part.get('additional', 0) or 0)
-            part['total_unit'] = adjusted_lm + bending_cost + additional
+            part['total_unit'] = lm_cost + bending_cost + additional
 
     def _update_row(self, idx: int):
         """Aktualizuj wiersz w tabeli"""
