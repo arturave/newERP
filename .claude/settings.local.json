@@ -22,7 +22,10 @@
       "Bash(git init:*)",
       "Bash(git remote add:*)",
       "Bash(git fetch:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: NewERP manufacturing system\n\n- Core modules: customers, products, quotations, orders, pricing\n- DXF processing and nesting algorithms\n- Costing and motion planning\n- GUI with customtkinter\n- Fix: Bends/Bend$ columns auto-recalculation in detailed_parts_panel\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git branch:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []

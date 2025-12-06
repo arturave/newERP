@@ -997,9 +997,11 @@ class PartsListPanel(ctk.CTkFrame):
 class CostParametersPanel(ctk.CTkFrame):
     """Panel parametrów kosztowych"""
 
-    def __init__(self, parent, on_params_change: Callable = None, **kwargs):
+    def __init__(self, parent, on_params_change: Callable = None,
+                 allocation_model_getter: Callable = None, **kwargs):
         super().__init__(parent, fg_color=Theme.BG_CARD, corner_radius=8, **kwargs)
         self.on_params_change = on_params_change
+        self.allocation_model_getter = allocation_model_getter
         self._setup_ui()
 
     def _setup_ui(self):
@@ -1067,22 +1069,6 @@ class CostParametersPanel(ctk.CTkFrame):
         self.entry_transport.pack(side="left", padx=5)
         ctk.CTkLabel(trans_frame, text="PLN", text_color=Theme.TEXT_SECONDARY).pack(side="left")
 
-        # Model alokacji
-        ctk.CTkFrame(self, height=1, fg_color=Theme.BG_INPUT).pack(fill="x", padx=10, pady=10)
-
-        alloc_frame = ctk.CTkFrame(self, fg_color="transparent")
-        alloc_frame.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(alloc_frame, text="Model alokacji:", font=ctk.CTkFont(size=11),
-                     text_color=Theme.TEXT_SECONDARY).pack(side="left")
-        self.alloc_combo = ctk.CTkComboBox(
-            alloc_frame,
-            values=["Proporcjonalny", "Ważony utylizacją", "Legacy"],
-            width=150,
-            command=self._on_change
-        )
-        self.alloc_combo.set("Proporcjonalny")
-        self.alloc_combo.pack(side="left", padx=10)
-
         # Separator
         ctk.CTkFrame(self, height=1, fg_color=Theme.BG_INPUT).pack(fill="x", padx=10, pady=10)
 
@@ -1131,12 +1117,14 @@ class CostParametersPanel(ctk.CTkFrame):
             except:
                 return 0.0
 
+        # Pobierz model alokacji z detailed_panel (przez getter)
         alloc_map = {
             "Proporcjonalny": "PROPORTIONAL",
-            "Ważony utylizacją": "UTILIZATION_WEIGHTED",
-            "Legacy": "LEGACY"
+            "Jednostkowy": "UNIT",
+            "Na arkusz": "PER_SHEET"
         }
-        allocation = alloc_map.get(self.alloc_combo.get(), "PROPORTIONAL")
+        alloc_value = self.allocation_model_getter() if self.allocation_model_getter else "Proporcjonalny"
+        allocation = alloc_map.get(alloc_value, "PROPORTIONAL")
 
         return {
             'allocation_model': allocation,
@@ -1756,7 +1744,11 @@ class OrderWindow(ctk.CTkToplevel):
         right_col.grid_rowconfigure(1, weight=1)
 
         # Parametry kosztów (góra prawa)
-        self.params_panel = CostParametersPanel(right_col, on_params_change=self._on_params_change)
+        self.params_panel = CostParametersPanel(
+            right_col,
+            on_params_change=self._on_params_change,
+            allocation_model_getter=lambda: self.detailed_panel.allocation_model_var.get()
+        )
         self.params_panel.grid(row=0, column=0, sticky="new", pady=(0, 5))
 
         # Podsumowanie kosztów (dół prawa)
@@ -2068,14 +2060,14 @@ class OrderWindow(ctk.CTkToplevel):
                     base_material_cost = estimate.get('material_cost', 0)
 
                     # Metoda alokacji kosztów materiału
-                    if allocation_model == "UTILIZATION_WEIGHTED" and nesting_efficiency > 0:
-                        # Ważony utylizacją: koszt / utylizacja
+                    if allocation_model == "UNIT" and nesting_efficiency > 0:
+                        # Jednostkowy: równy podział kosztów
                         material_cost = base_material_cost / nesting_efficiency
-                        logger.info(f"[CostCalc]   Mat. (ważony): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
-                    elif allocation_model == "LEGACY" and nesting_efficiency > 0:
-                        # Legacy: podobnie jak ważony
+                        logger.info(f"[CostCalc]   Mat. (jednostkowy): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
+                    elif allocation_model == "PER_SHEET" and nesting_efficiency > 0:
+                        # Na arkusz: pełny koszt arkusza
                         material_cost = base_material_cost / nesting_efficiency
-                        logger.info(f"[CostCalc]   Mat. (legacy): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
+                        logger.info(f"[CostCalc]   Mat. (na arkusz): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
                     else:
                         # Proporcjonalny: bez zmiany
                         material_cost = base_material_cost
