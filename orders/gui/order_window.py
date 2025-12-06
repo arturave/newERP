@@ -1891,8 +1891,10 @@ class OrderWindow(ctk.CTkToplevel):
         self._bring_to_front()  # Przywróć focus po załadowaniu
 
     def _on_params_change(self, params: Dict):
-        """Callback - zmiana parametrów"""
+        """Callback - zmiana parametrów - automatycznie przelicza koszty"""
         logger.debug(f"[OrderWindow] Params changed: {params}")
+        # Automatyczne przeliczenie po zmianie parametrów (w tym narzutu)
+        self._recalculate()
 
     def _run_nesting(self):
         """Uruchom nesting"""
