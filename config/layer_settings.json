@@ -1,0 +1,54 @@
+{
+    "marking_keywords": [
+        "grawer",
+        "marking",
+        "opis",
+        "text",
+        "engrave",
+        "mark",
+        "sign"
+    ],
+    "bending_keywords": [
+        "bend",
+        "gięcie",
+        "big",
+        "inner_bend",
+        "outer_bend",
+        "k-factor",
+        "folding"
+    ],
+    "ignore_layers": [
+        "RAMKA",
+        "WYMIARY",
+        "DIM",
+        "TEXT",
+        "TEKST",
+        "OPIS",
+        "DEFPOINTS",
+        "ASSEMBLY",
+        "HIDDEN",
+        "CENTER",
+        "CUTLINE",
+        "GRID",
+        "TITLE",
+        "BLOCK",
+        "LOGO",
+        "INFO",
+        "FRAME",
+        "BORDER",
+        "AM_",
+        "NOTES",
+        "KOTY",
+        "ZAKRES"
+    ],
+    "grawer_color_index": 2,
+    "color_mappings": {
+        "1": "cutting",
+        "2": "marking",
+        "3": "bending",
+        "4": "cutting",
+        "5": "cutting",
+        "6": "cutting",
+        "7": "cutting"
+    }
+}

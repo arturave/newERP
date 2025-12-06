@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(tree:*)",
+      "Bash(dir:*)",
+      "Bash(grep:*)",
+      "Bash(start python main_dashboard.py:*)",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\orders\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\orders\")",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\orders\\gui\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\orders\\gui\")",
+      "Bash(start python:*)",
+      "Bash(cat:*)",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\scripts\\tests\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\scripts\\tests\")",
+      "Bash(findstr:*)",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\")",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\")",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\\pricing\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\\pricing\")",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\\quotations_pricing\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\\quotations_pricing\")",
+      "Bash(if not exist \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\\dxf_utils\" mkdir \"C:\\Users\\artur\\source\\repos\\arturave\\NewERP\\archiv\\classic_costing\\dxf_utils\")",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

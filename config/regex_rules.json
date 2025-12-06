@@ -1,0 +1,187 @@
+[
+  {
+    "name": "SuperMirrorBlack",
+    "aliases": [
+      "super\\s*mirror\\s*black",
+      "supermirrorblack",
+      "titanblack",
+      "titan\\s*black",
+      "titan[_-]*black"
+    ]
+  },
+  {
+    "name": "SUPERLUSTRO",
+    "aliases": [
+      "super\\s*lustro",
+      "superlustro",
+      "\\blustro\\b"
+    ]
+  },
+  {
+    "name": "1.4404",
+    "aliases": [
+      "1[.,]?4404",
+      "316l",
+      "316\\s*l",
+      "aisi[_ ]?316l",
+      "aisi[_ ]?316\\s*l"
+    ]
+  },
+  {
+    "name": "1.4401",
+    "aliases": [
+      "1[.,]?4401",
+      "aisi[_ ]?316",
+      "inox\\s*316",
+      "inox316",
+      "\\b316\\b"
+    ]
+  },
+  {
+    "name": "1.4571",
+    "aliases": [
+      "1[.,]?4571",
+      "316ti",
+      "316\\s*ti",
+      "aisi[_ ]?316ti",
+      "inox\\s*316\\s*ti",
+      "inox316ti"
+    ]
+  },
+  {
+    "name": "1.4301",
+    "aliases": [
+      "1[.,]?4301",
+      "aisi[_ ]?304",
+      "inox\\s*304",
+      "inox304",
+      "\\b304\\b",
+      "nerez"
+    ]
+  },
+  {
+    "name": "1.4301 (Generic)",
+    "aliases": [
+      "inox"
+    ]
+  },
+  {
+    "name": "S355",
+    "aliases": [
+      "s355",
+      "s355jr",
+      "s355j2",
+      "s355j2g3",
+      "s355j2\\+n",
+      "s355mc"
+    ]
+  },
+  {
+    "name": "S235",
+    "aliases": [
+      "s235",
+      "s235jr",
+      "s235jr2",
+      "s235j2g3",
+      "fe\\s*360",
+      "fe\\s*235",
+      "\\bfe\\b"
+    ]
+  },
+  {
+    "name": "DC01",
+    "aliases": [
+      "dc01",
+      "dc-01",
+      "dc\\s*01"
+    ]
+  },
+  {
+    "name": "ALUMINIUM",
+    "aliases": [
+      "aluminium",
+      "aluminum",
+      "\\balu\\b",
+      "alu[_ -]?6060",
+      "alu[_ -]?5754",
+      "\\bal\\b"
+    ]
+  },
+  {
+    "name": "Corten",
+    "aliases": [
+      "corten",
+      "cor[- ]?ten",
+      "s355j2wp",
+      "s355j0wp"
+    ]
+  },
+  {
+    "name": "P265GH",
+    "aliases": [
+      "p265gh",
+      "p256gh"
+    ]
+  },
+  {
+    "name": "42CrMo4",
+    "aliases": [
+      "42crmo4",
+      "42c.?m0?4"
+    ]
+  },
+  {
+    "name": "Hardox400",
+    "aliases": [
+      "hardox\\s*400",
+      "hardox400",
+      "hx400"
+    ]
+  },
+  {
+    "name": "Hardox450",
+    "aliases": [
+      "hardox\\s*450",
+      "hardox450",
+      "hx450"
+    ]
+  },
+  {
+    "name": "Hardox500",
+    "aliases": [
+      "hardox\\s*500",
+      "hardox500",
+      "hx500"
+    ]
+  },
+  {
+    "name": "OCYNK",
+    "aliases": [
+      "ocynk",
+      "galv",
+      "galvanized",
+      "zn",
+      "dx51d",
+      "dx52d",
+      "dx53d"
+    ]
+  },
+  {
+    "name": "MOSIĄDZ",
+    "aliases": [
+      "mosiądz",
+      "mosiadz",
+      "brass",
+      "cuzn"
+    ]
+  },
+  {
+    "name": "MIEDŹ",
+    "aliases": [
+      "miedź",
+      "miedz",
+      "copper",
+      "\\bcu\\b"
+    ]
+  }
+]

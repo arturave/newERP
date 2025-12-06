@@ -1,0 +1,15 @@
+ Volume in drive C has no label.
+ Volume Serial Number is B67E-9709
+
+ Directory of C:\Users\artur\source\repos\arturave\NewERP\costing\tests\test_dxfs
+
+04.12.2025  18:01    <DIR>          .
+04.12.2025  17:59    <DIR>          ..
+17.05.2024  13:19           360ÿ174 11-057621_INOX304_3mm_15szt.dxf
+17.05.2024  13:19           357ÿ364 11-057622_INOX304_3mm_15szt.dxf
+17.05.2024  13:19           373ÿ515 11-059635_INOX304_2mm_1szt.dxf
+17.05.2024  13:19           415ÿ964 11-059654_INOX304_2mm_1szt.dxf
+17.05.2024  13:19           420ÿ490 11-059674_INOX304_1,5mm_1szt.dxf
+04.12.2025  18:01                 0 dir.txt
+               6 File(s)      1ÿ927ÿ507 bytes
+               2 Dir(s)  108ÿ498ÿ149ÿ376 bytes free
