@@ -25,7 +25,8 @@
       "Bash(git add:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: NewERP manufacturing system\n\n- Core modules: customers, products, quotations, orders, pricing\n- DXF processing and nesting algorithms\n- Costing and motion planning\n- GUI with customtkinter\n- Fix: Bends/Bend$ columns auto-recalculation in detailed_parts_panel\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git branch:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nRemove duplicate ''Model alokacji'' from CostParametersPanel\n\n- Removed allocation model dropdown from CostParametersPanel (right panel)\n- Keep only one allocation dropdown in DetailedPartsPanel (above parts list)\n- CostParametersPanel now gets allocation value via getter callback\n- Updated allocation model values to match DetailedPartsPanel options\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []

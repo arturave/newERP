@@ -762,7 +762,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
             return
 
         self._recalculate_part(idx)
-        self._update_summary()  # To wywołuje callback automatycznie
+        # _update_summary() jest już wywoływane w _recalculate_all()
 
     def _find_part_index(self, item_id: str) -> Optional[int]:
         """Znajdz indeks czesci po ID wiersza"""
@@ -783,14 +783,47 @@ class DetailedPartsPanel(ctk.CTkFrame):
     BEND_PRICE = 3.0
 
     def _recalculate_part(self, idx: int):
-        """Przelicz koszty dla detalu"""
+        """Przelicz koszty dla detalu - wywołuje pełne przeliczenie z alokacją"""
+        # Przy edycji pojedynczego detalu przeliczamy wszystkie,
+        # bo modele alokacji (Jednostkowy, Na arkusz) zależą od wszystkich detali
+        self._recalculate_all()
+
+    def _recalculate_all(self):
+        """Przelicz wszystkie detale z uwzględnieniem modelu alokacji"""
+        if not self.parts_data:
+            self._update_summary()
+            return
+
+        allocation_model = self.allocation_model_var.get()
+        logger.info(f"[DetailedParts] Przeliczanie z modelem: {allocation_model}")
+
+        # Krok 1: Oblicz koszty bazowe (proporcjonalne) dla wszystkich detali
+        for idx in range(len(self.parts_data)):
+            self._recalculate_part_base(idx)
+
+        # Krok 2: Zastosuj model alokacji
+        if allocation_model == "Jednostkowy":
+            self._apply_unit_allocation()
+        elif allocation_model == "Na arkusz":
+            self._apply_per_sheet_allocation()
+        # Proporcjonalny - koszty bazowe są już poprawne
+
+        # Krok 3: Aktualizuj wiersze w tabeli
+        for idx in range(len(self.parts_data)):
+            self._update_row(idx)
+
+        self._update_summary()
+
+    def _recalculate_part_base(self, idx: int):
+        """Oblicz bazowe koszty dla detalu (bez alokacji)"""
         part = self.parts_data[idx]
 
-        # Przelicz L+M cost na podstawie wagi i dlugosci ciecia
+        # Oblicz L+M cost
         lm_cost = self._calculate_lm_cost(part)
         part['lm_cost'] = lm_cost
+        part['base_lm_cost'] = lm_cost  # Zachowaj bazowy koszt
 
-        # Przelicz koszt gięć na podstawie ilości bends
+        # Przelicz koszt gięć
         bends = int(part.get('bends', 0) or 0)
         bending_cost = bends * self.BEND_PRICE
         part['bending_cost'] = bending_cost
@@ -799,24 +832,62 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
         # Jesli nie kalkulujemy z materialem - odejmij koszt materialu z L+M
         if not part.get('calc_with_material', True):
-            # Oblicz sam koszt materialu
             material = part.get('material', '').upper()
             weight_kg = float(part.get('weight', 0) or 0)
             mat_price = self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
             material_cost = weight_kg * mat_price
-            # Odejmij material, zostaw tylko laser
             lm_cost = max(0, lm_cost - material_cost)
+            part['lm_cost'] = lm_cost
 
         total_unit = lm_cost + bending_cost + additional
         part['total_unit'] = total_unit
 
-        self._update_row(idx)
+    def _apply_unit_allocation(self):
+        """Jednostkowy: równy podział kosztów między wszystkie detale"""
+        if not self.parts_data:
+            return
 
-    def _recalculate_all(self):
-        """Przelicz wszystkie detale"""
-        for idx in range(len(self.parts_data)):
-            self._recalculate_part(idx)
-        self._update_summary()  # To wywołuje callback automatycznie
+        # Oblicz sumę wszystkich kosztów L+M
+        total_lm = sum(float(p.get('lm_cost', 0) or 0) for p in self.parts_data)
+        num_parts = len(self.parts_data)
+
+        # Równy podział
+        equal_lm = total_lm / num_parts if num_parts > 0 else 0
+
+        logger.info(f"[Alokacja Jednostkowa] Suma L+M: {total_lm:.2f}, "
+                   f"Liczba detali: {num_parts}, Koszt/detal: {equal_lm:.2f}")
+
+        for part in self.parts_data:
+            part['lm_cost'] = equal_lm
+            bending_cost = float(part.get('bending_cost', 0) or 0)
+            additional = float(part.get('additional', 0) or 0)
+            part['total_unit'] = equal_lm + bending_cost + additional
+
+    def _apply_per_sheet_allocation(self):
+        """Na arkusz: każdy detal ponosi pełny koszt materiału arkusza"""
+        if not self.parts_data:
+            return
+
+        # Dla każdego detalu - koszt jak dla pełnego arkusza
+        # Używamy największego detalu jako referencji lub szacujemy koszt arkusza
+        max_lm = max(float(p.get('base_lm_cost', 0) or 0) for p in self.parts_data)
+
+        # Mnożnik dla kosztu arkusza (zakładamy ~30% wykorzystania średnio)
+        # więc koszt arkusza = koszt_detalu / 0.3 = koszt_detalu * 3.33
+        # Ale upraszczamy: każdy detal = max_koszt * 1.5
+        sheet_multiplier = 2.0  # Każdy detal ponosi podwójny koszt (jak na pół arkusza)
+
+        logger.info(f"[Alokacja Na Arkusz] Max L+M: {max_lm:.2f}, Mnożnik: {sheet_multiplier}")
+
+        for part in self.parts_data:
+            base_lm = float(part.get('base_lm_cost', 0) or 0)
+            # Koszt = bazowy * mnożnik (symulacja pełnego arkusza)
+            adjusted_lm = base_lm * sheet_multiplier
+            part['lm_cost'] = adjusted_lm
+
+            bending_cost = float(part.get('bending_cost', 0) or 0)
+            additional = float(part.get('additional', 0) or 0)
+            part['total_unit'] = adjusted_lm + bending_cost + additional
 
     def _update_row(self, idx: int):
         """Aktualizuj wiersz w tabeli"""
