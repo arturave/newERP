@@ -1100,6 +1100,58 @@ class CostParametersPanel(ctk.CTkFrame):
             )
             btn.pack(side="left", padx=1)
 
+        # Wczytaj wartości z ustawień
+        self._load_cost_settings()
+
+    def _load_cost_settings(self):
+        """Wczytaj wartości 'Koszty per zlecenie' z config/cost_settings.json"""
+        settings_path = Path(__file__).parent.parent.parent / "config" / "cost_settings.json"
+
+        try:
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+
+                logger.debug(f"[CostParametersPanel] Wczytano ustawienia kosztów: {settings}")
+
+                # Technologia
+                if settings.get('tech_cost_enabled', False):
+                    self.chk_technology.select()
+                else:
+                    self.chk_technology.deselect()
+                tech_value = settings.get('tech_cost_value', 0.0)
+                self.entry_technology.delete(0, "end")
+                self.entry_technology.insert(0, f"{tech_value:.2f}")
+
+                # Opakowania
+                if settings.get('packaging_cost_enabled', False):
+                    self.chk_packaging.select()
+                else:
+                    self.chk_packaging.deselect()
+                packaging_value = settings.get('packaging_cost_value', 0.0)
+                self.entry_packaging.delete(0, "end")
+                self.entry_packaging.insert(0, f"{packaging_value:.2f}")
+
+                # Transport
+                if settings.get('transport_cost_enabled', False):
+                    self.chk_transport.select()
+                else:
+                    self.chk_transport.deselect()
+                transport_value = settings.get('transport_cost_value', 0.0)
+                self.entry_transport.delete(0, "end")
+                self.entry_transport.insert(0, f"{transport_value:.2f}")
+
+                # Narzut procentowy
+                markup = settings.get('default_markup_percent', 0.0)
+                self.markup_entry.delete(0, "end")
+                self.markup_entry.insert(0, f"{markup:.0f}")
+
+                logger.info(f"[CostParametersPanel] Wczytano koszty per zlecenie: "
+                           f"Tech={tech_value}, Pack={packaging_value}, Trans={transport_value}")
+
+        except Exception as e:
+            logger.error(f"[CostParametersPanel] Błąd wczytywania ustawień kosztów: {e}")
+
     def _set_markup(self, percent: int):
         """Ustaw wartość narzutu procentowego"""
         self.markup_entry.delete(0, "end")
@@ -1120,7 +1172,7 @@ class CostParametersPanel(ctk.CTkFrame):
         # Pobierz model alokacji z detailed_panel (przez getter)
         alloc_map = {
             "Proporcjonalny": "PROPORTIONAL",
-            "Jednostkowy": "UNIT",
+            "Prostokąt otaczający": "UNIT",
             "Na arkusz": "PER_SHEET"
         }
         alloc_value = self.allocation_model_getter() if self.allocation_model_getter else "Proporcjonalny"
@@ -1980,6 +2032,12 @@ class OrderWindow(ctk.CTkToplevel):
 
         # Zmień status
         self.lbl_status.configure(text="Nesting zakończony - wyniki zaktualizowane")
+
+        # Włącz dropdown alokacji w panelu detali (teraz dostępny po nestingu)
+        if hasattr(self, 'detailed_panel') and self.detailed_panel:
+            self.detailed_panel.enable_allocation_model()
+            logger.info("[OrderWindow] Allocation model enabled after nesting")
+
         self._bring_to_front()
 
     def _recalculate(self):
@@ -2063,9 +2121,9 @@ class OrderWindow(ctk.CTkToplevel):
 
                     # Metoda alokacji kosztów materiału
                     if allocation_model == "UNIT" and nesting_efficiency > 0:
-                        # Jednostkowy: równy podział kosztów
+                        # Prostokąt otaczający: równy podział kosztów
                         material_cost = base_material_cost / nesting_efficiency
-                        logger.info(f"[CostCalc]   Mat. (jednostkowy): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
+                        logger.info(f"[CostCalc]   Mat. (prostokąt otaczający): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
                     elif allocation_model == "PER_SHEET" and nesting_efficiency > 0:
                         # Na arkusz: pełny koszt arkusza
                         material_cost = base_material_cost / nesting_efficiency
@@ -2079,7 +2137,8 @@ class OrderWindow(ctk.CTkToplevel):
 
                 if params.get('include_cutting', True):
                     total_result['cutting_cost'] += estimate.get('cutting_cost', 0)
-                if params.get('include_foil', True) or foil_auto_enabled:
+                # Folia: tylko gdy checkbox włączony I materiał wymaga folii
+                if params.get('include_foil', True) and foil_auto_enabled:
                     total_result['foil_cost'] += estimate.get('foil_cost', 0)
                 if params.get('include_piercing', True):
                     total_result['piercing_cost'] += estimate.get('piercing_cost', 0)

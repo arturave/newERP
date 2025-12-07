@@ -70,9 +70,15 @@ class EventType(Enum):
     ATTACHMENT_DELETED = "attachment.deleted"
     
     # ========== Document Events ==========
+    DOCUMENT_CREATED = "document.created"
     DOCUMENT_GENERATED = "document.generated"
+    DOCUMENT_ARCHIVED = "document.archived"
+    DOCUMENT_DELETED = "document.deleted"
     WZ_GENERATED = "document.wz_generated"
     INVOICE_GENERATED = "document.invoice_generated"
+    QUOTATION_PDF_GENERATED = "document.quotation_generated"
+    CMR_GENERATED = "document.cmr_generated"
+    PACKING_LIST_GENERATED = "document.packing_list_generated"
     
     # ========== System Events ==========
     USER_LOGGED_IN = "system.user_logged_in"

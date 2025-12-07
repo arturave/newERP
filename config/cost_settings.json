@@ -1,0 +1,16 @@
+{
+    "sheet_handling_cost": 40.0,
+    "foil_cost_per_meter": 0.2,
+    "tech_cost_enabled": true,
+    "tech_cost_value": 50.0,
+    "packaging_cost_enabled": true,
+    "packaging_cost_value": 100.0,
+    "transport_cost_enabled": false,
+    "transport_cost_value": 0.0,
+    "piercing_time_inox_base_s": 0.5,
+    "piercing_time_inox_per_mm_s": 0.1,
+    "piercing_time_steel_base_s": 0.5,
+    "piercing_time_steel_per_mm_s": 0.3,
+    "time_buffer_percent": 25.0,
+    "default_markup_percent": 0.0
+}

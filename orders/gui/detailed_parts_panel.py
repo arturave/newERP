@@ -23,6 +23,23 @@ import io
 
 logger = logging.getLogger(__name__)
 
+# Import cost debug logger
+try:
+    from orders.cost_debug_logger import get_cost_debug_logger
+    cost_logger = get_cost_debug_logger()
+except ImportError:
+    cost_logger = None
+
+# Import cost calculation logger (dla analityka finansowego)
+try:
+    from orders.cost_calculation_logger import (
+        CostCalculationLogger, get_cost_logger, log_calculation_start,
+        log_part_cost, save_cost_log, get_cost_report
+    )
+except ImportError:
+    CostCalculationLogger = None
+    get_cost_logger = None
+
 
 class Theme:
     """Paleta kolorow"""
@@ -394,10 +411,10 @@ Zastosowanie: Standardowa produkcja, wyceny dla klientów""",
             graphic_type="proportional"
         )
 
-        # === JEDNOSTKOWY ===
+        # === PROSTOKĄT OTACZAJĄCY ===
         self._add_model_section(
             content,
-            title="2. Jednostkowy",
+            title="2. Prostokąt otaczający",
             color=Theme.ACCENT_WARNING,
             description="""Koszty arkusza są dzielone równo między wszystkie detale
 bez względu na ich rozmiar.
@@ -500,7 +517,7 @@ Zastosowanie: Prototypy, duże pojedyncze detale, niski nesting""",
             canvas.create_text(42, 80, text="odpad", fill="#666", font=("Arial", 7))
 
         elif graphic_type == "unit":
-            # Jednostkowy - równe części
+            # Prostokąt otaczający - równe części
             colors = ["#f59e0b", "#fbbf24", "#fcd34d", "#fef3c7"]
             positions = [(15, 15, 80, 50), (85, 15, 155, 50),
                         (15, 55, 80, 100), (85, 55, 155, 100)]
@@ -564,6 +581,9 @@ class DetailedPartsPanel(ctk.CTkFrame):
         # Globalne ustawienia
         self.calc_with_material_var = ctk.BooleanVar(value=True)
 
+        # Flaga: czy nesting zostal wykonany (alokacja dostepna dopiero po nestingu)
+        self._nesting_completed = False
+
         # Załaduj cenniki z PricingTables
         self.pricing_tables = None
         self._load_pricing_tables()
@@ -597,20 +617,29 @@ class DetailedPartsPanel(ctk.CTkFrame):
         alloc_frame = ctk.CTkFrame(header, fg_color="transparent")
         alloc_frame.pack(side="right", padx=5)
 
-        ctk.CTkLabel(alloc_frame, text="Model Alokacji:",
-                     font=ctk.CTkFont(size=10), text_color=Theme.TEXT_SECONDARY
-                     ).pack(side="left", padx=(0, 3))
+        self.alloc_label = ctk.CTkLabel(alloc_frame, text="Model Alokacji:",
+                     font=ctk.CTkFont(size=10), text_color=Theme.TEXT_MUTED
+                     )
+        self.alloc_label.pack(side="left", padx=(0, 3))
 
         self.allocation_model_var = ctk.StringVar(value="Proporcjonalny")
         self.allocation_combo = ctk.CTkComboBox(
             alloc_frame,
-            values=["Proporcjonalny", "Jednostkowy", "Na arkusz"],
+            values=["Proporcjonalny", "Prostokąt otaczający", "Na arkusz"],
             variable=self.allocation_model_var,
             command=self._on_allocation_change,
             width=120, height=24,
-            font=ctk.CTkFont(size=10)
+            font=ctk.CTkFont(size=10),
+            state="disabled"  # Domyslnie wylaczony - aktywny dopiero po nestingu
         )
         self.allocation_combo.pack(side="left", padx=2)
+
+        # Etykieta informujaca o koniecznosci nestingu
+        self.alloc_info_label = ctk.CTkLabel(
+            alloc_frame, text="(wymaga nestingu)",
+            font=ctk.CTkFont(size=9), text_color=Theme.TEXT_MUTED
+        )
+        self.alloc_info_label.pack(side="left", padx=(3, 0))
 
         btn_help = ctk.CTkButton(
             alloc_frame, text="?", width=24, height=24,
@@ -679,6 +708,14 @@ class DetailedPartsPanel(ctk.CTkFrame):
             font=ctk.CTkFont(size=10), command=self._recalculate_all
         )
         btn_recalc.pack(side="left", padx=2)
+
+        # Przycisk do otwierania okna logu kosztow
+        btn_debug_log = ctk.CTkButton(
+            filter_frame, text="Log", width=40, height=24,
+            fg_color="#4a4a4a", hover_color="#5a5a5a",
+            font=ctk.CTkFont(size=10), command=self._open_debug_log
+        )
+        btn_debug_log.pack(side="left", padx=2)
 
         # === TREEVIEW TABLE ===
         table_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -753,6 +790,51 @@ class DetailedPartsPanel(ctk.CTkFrame):
         """Pokaż okno pomocy z opisem modeli alokacji"""
         AllocationHelpDialog(self.winfo_toplevel())
 
+    def _open_debug_log(self):
+        """Otwórz okno z logiem obliczeń kosztów i zapisz do pliku"""
+        # Zapisz log do pliku w logs/costs/
+        if get_cost_logger is not None:
+            try:
+                filepath = save_cost_log()
+                logger.info(f"[DetailedParts] Zapisano log kosztów do: {filepath}")
+            except Exception as e:
+                logger.error(f"[DetailedParts] Błąd zapisu logu: {e}")
+
+        # Otwórz okno debugowe
+        try:
+            from orders.gui.cost_debug_window import CostDebugWindow
+            CostDebugWindow(self.winfo_toplevel())
+        except ImportError as e:
+            # Fallback - pokaż raport w messagebox
+            if get_cost_logger is not None:
+                try:
+                    report = get_cost_report()
+                    # Skróć raport dla messagebox
+                    if len(report) > 2000:
+                        report = report[:2000] + "\n\n... (skrócono, pełny raport w pliku)"
+                    messagebox.showinfo("Raport kosztów", report)
+                except Exception:
+                    messagebox.showerror("Błąd", f"Nie można otworzyć okna logu: {e}")
+            else:
+                messagebox.showerror("Błąd", f"Nie można otworzyć okna logu: {e}")
+
+    def enable_allocation_model(self):
+        """Włącz dropdown alokacji po wykonaniu nestingu"""
+        self._nesting_completed = True
+        self.allocation_combo.configure(state="normal")
+        self.alloc_label.configure(text_color=Theme.TEXT_SECONDARY)
+        self.alloc_info_label.configure(text="")  # Ukryj info
+        logger.info("[DetailedParts] Allocation model enabled (nesting completed)")
+
+    def disable_allocation_model(self):
+        """Wyłącz dropdown alokacji (reset do stanu przed nestingiem)"""
+        self._nesting_completed = False
+        self.allocation_combo.configure(state="disabled")
+        self.allocation_model_var.set("Proporcjonalny")  # Reset do domyslnego
+        self.alloc_label.configure(text_color=Theme.TEXT_MUTED)
+        self.alloc_info_label.configure(text="(wymaga nestingu)")
+        logger.info("[DetailedParts] Allocation model disabled (reset)")
+
     def _on_cell_edit(self, item: str, column: str, new_value: str):
         """Obsluz edycje komorki"""
         idx = self._find_part_index(item)
@@ -817,7 +899,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
     def _recalculate_part(self, idx: int):
         """Przelicz koszty dla detalu - wywołuje pełne przeliczenie z alokacją"""
         # Przy edycji pojedynczego detalu przeliczamy wszystkie,
-        # bo modele alokacji (Jednostkowy, Na arkusz) zależą od wszystkich detali
+        # bo modele alokacji (Prostokąt otaczający, Na arkusz) zależą od wszystkich detali
         self._recalculate_all()
 
     def _recalculate_all(self):
@@ -829,12 +911,17 @@ class DetailedPartsPanel(ctk.CTkFrame):
         allocation_model = self.allocation_model_var.get()
         logger.info(f"[DetailedParts] Przeliczanie z modelem: {allocation_model}")
 
+        # Rozpocznij logowanie dla analityka finansowego
+        if get_cost_logger is not None:
+            order_name = getattr(self, 'order_name', 'unknown')
+            log_calculation_start(allocation_model, order_name)
+
         # Krok 1: Oblicz koszty bazowe (proporcjonalne) dla wszystkich detali
         for idx in range(len(self.parts_data)):
             self._recalculate_part_base(idx)
 
         # Krok 2: Zastosuj model alokacji
-        if allocation_model == "Jednostkowy":
+        if allocation_model == "Prostokąt otaczający":
             self._apply_unit_allocation()
         elif allocation_model == "Na arkusz":
             self._apply_per_sheet_allocation()
@@ -844,28 +931,62 @@ class DetailedPartsPanel(ctk.CTkFrame):
         for idx in range(len(self.parts_data)):
             self._update_row(idx)
 
+        # Krok 4: Loguj koszty dla analityka finansowego
+        if get_cost_logger is not None:
+            for part in self.parts_data:
+                log_part_cost(part)
+
         self._update_summary()
 
     def _recalculate_part_base(self, idx: int):
-        """Oblicz bazowe koszty dla detalu (bez alokacji) - respektuje manualne wartości"""
+        """Oblicz bazowe koszty dla detalu (bez alokacji) - respektuje manualne wartości.
+
+        Zapisuje osobne składniki kosztowe:
+        - material_cost: koszt materiału (zmieniany przez model alokacji)
+        - cutting_cost: koszt cięcia (STAŁY)
+        - engraving_cost: koszt graweru (STAŁY)
+        - foil_cost: koszt folii (STAŁY)
+        - base_material_cost: bazowy koszt materiału (przed alokacją)
+        """
         part = self.parts_data[idx]
 
-        # Oblicz L+M cost - tylko jeśli nie było ręcznie ustawione
+        # Oblicz składniki kosztu L+M - tylko jeśli nie było ręcznie ustawione
         if not part.get('_manual_lm_cost', False):
-            lm_cost = self._calculate_lm_cost(part)
-            # Jesli nie kalkulujemy z materialem - odejmij koszt materialu
+            costs = self._calculate_lm_cost(part)  # Zwraca słownik ze składnikami
+
+            # Zapisz osobne składniki kosztowe
+            part['material_cost'] = costs['material_cost']
+            part['cutting_cost'] = costs['cutting_cost']
+            part['engraving_cost'] = costs['engraving_cost']
+            part['foil_cost'] = costs['foil_cost']
+            part['base_material_cost'] = costs['material_cost']  # Dla alokacji
+
+            # Zapisz formuły dla loggera
+            part['_material_formula'] = costs.get('material_formula', '')
+            part['_cutting_formula'] = costs.get('cutting_formula', '')
+            part['_foil_formula'] = costs.get('foil_formula', '')
+
+            # Jeśli nie kalkulujemy z materiałem - wyzeruj koszt materiału
             if not part.get('calc_with_material', True):
-                material = part.get('material', '').upper()
-                weight_kg = float(part.get('weight', 0) or 0)
-                mat_price = self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
-                material_cost = weight_kg * mat_price
-                lm_cost = max(0, lm_cost - material_cost)
+                part['material_cost'] = 0.0
+                part['base_material_cost'] = 0.0
+
+            # L+M jako suma składników
+            lm_cost = (part['material_cost'] + part['cutting_cost'] +
+                      part['engraving_cost'] + part['foil_cost'])
             part['lm_cost'] = lm_cost
             part['base_lm_cost'] = lm_cost
         else:
-            # Użyj ręcznie ustawionej wartości
+            # Użyj ręcznie ustawionej wartości - zachowaj poprzednie składniki
             lm_cost = float(part.get('lm_cost', 0) or 0)
             part['base_lm_cost'] = lm_cost
+            # Jeśli brak składników - użyj L+M jako materiału
+            if 'material_cost' not in part:
+                part['material_cost'] = lm_cost
+                part['cutting_cost'] = 0.0
+                part['engraving_cost'] = 0.0
+                part['foil_cost'] = 0.0
+                part['base_material_cost'] = lm_cost
 
         # Przelicz koszt gięć - tylko jeśli nie było ręcznie ustawione
         if not part.get('_manual_bending_cost', False):
@@ -880,11 +1001,15 @@ class DetailedPartsPanel(ctk.CTkFrame):
         part['total_unit'] = total_unit
 
     def _apply_unit_allocation(self):
-        """Jednostkowy: równy podział kosztów między wszystkie detale (tylko nie-manualne)"""
+        """Prostokąt otaczający: równy podział kosztów MATERIAŁU między detale.
+
+        WAŻNE: Tylko material_cost jest dzielony równo.
+        Koszty cięcia, graweru i folii pozostają STAŁE (zależą od geometrii).
+        """
         if not self.parts_data:
             return
 
-        # Oblicz sumę kosztów L+M tylko dla nie-manualnych detali
+        # Oblicz sumę kosztów MATERIAŁU tylko dla nie-manualnych detali
         non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
         if not non_manual_parts:
             # Wszystkie są manualne - tylko aktualizuj total
@@ -895,43 +1020,82 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 part['total_unit'] = lm_cost + bending_cost + additional
             return
 
-        total_lm = sum(float(p.get('lm_cost', 0) or 0) for p in non_manual_parts)
+        # Suma kosztów MATERIAŁU (nie całego L+M!)
+        total_material = sum(float(p.get('material_cost', 0) or 0) for p in non_manual_parts)
         num_parts = len(non_manual_parts)
-        equal_lm = total_lm / num_parts if num_parts > 0 else 0
+        equal_material = total_material / num_parts if num_parts > 0 else 0
 
-        logger.info(f"[Alokacja Jednostkowa] Suma L+M: {total_lm:.2f}, "
-                   f"Detali (nie-manualnych): {num_parts}, Koszt/detal: {equal_lm:.2f}")
+        logger.info(f"[Alokacja Jednostkowa] Suma materiału: {total_material:.2f}, "
+                   f"Detali: {num_parts}, Mat/detal: {equal_material:.2f}")
 
         for part in self.parts_data:
             # Nie zmieniaj manualnych wartości L+M
             if not part.get('_manual_lm_cost', False):
-                part['lm_cost'] = equal_lm
+                # Zmień TYLKO koszt materiału - reszta pozostaje stała
+                part['material_cost'] = equal_material
+                # Przelicz L+M jako sumę składników (cięcie, grawer, folia pozostają bez zmian)
+                part['lm_cost'] = (part['material_cost'] +
+                                  float(part.get('cutting_cost', 0) or 0) +
+                                  float(part.get('engraving_cost', 0) or 0) +
+                                  float(part.get('foil_cost', 0) or 0))
+
             lm_cost = float(part.get('lm_cost', 0) or 0)
             bending_cost = float(part.get('bending_cost', 0) or 0)
             additional = float(part.get('additional', 0) or 0)
             part['total_unit'] = lm_cost + bending_cost + additional
 
     def _apply_per_sheet_allocation(self):
-        """Na arkusz: każdy detal ponosi pełny koszt materiału arkusza (respektuje manualne)"""
+        """Na arkusz: koszt arkusza podzielony równo między detale.
+
+        WAŻNE: Tylko material_cost jest modyfikowany.
+        Koszty cięcia, graweru i folii pozostają STAŁE (zależą od geometrii).
+
+        Logika: Suma kosztów materiału (lub koszt arkusza z nestingu) dzielona
+        równo między wszystkie detale.
+        """
         if not self.parts_data:
             return
 
-        # Używamy największego bazowego kosztu jako referencji
-        non_manual_costs = [float(p.get('base_lm_cost', 0) or 0)
-                           for p in self.parts_data if not p.get('_manual_lm_cost', False)]
-        max_lm = max(non_manual_costs) if non_manual_costs else 0
+        non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
+        if not non_manual_parts:
+            # Wszystkie są manualne - tylko aktualizuj total
+            for part in self.parts_data:
+                lm_cost = float(part.get('lm_cost', 0) or 0)
+                bending_cost = float(part.get('bending_cost', 0) or 0)
+                additional = float(part.get('additional', 0) or 0)
+                part['total_unit'] = lm_cost + bending_cost + additional
+            return
 
-        # Mnożnik dla kosztu arkusza
-        sheet_multiplier = 2.0  # Każdy detal ponosi podwójny koszt
+        # Oblicz całkowity koszt materiału (bounding boxes)
+        total_sheet_cost = sum(float(p.get('base_material_cost', 0) or 0) for p in non_manual_parts)
 
-        logger.info(f"[Alokacja Na Arkusz] Max L+M: {max_lm:.2f}, Mnożnik: {sheet_multiplier}")
+        # Jeśli mamy wyniki nestingu z kosztem arkuszy - użyj ich
+        if hasattr(self, 'nesting_results') and self.nesting_results:
+            sheets = self.nesting_results.get('sheets', [])
+            if sheets:
+                # Suma kosztów wszystkich użytych arkuszy
+                sheet_costs = sum(float(s.get('sheet_cost', 0) or 0) for s in sheets)
+                if sheet_costs > 0:
+                    total_sheet_cost = sheet_costs
+                    logger.info(f"[Alokacja Na Arkusz] Używam kosztów arkuszy z nestingu: {total_sheet_cost:.2f}")
+
+        # Podziel równo na wszystkie nie-manualne detale
+        num_parts = len(non_manual_parts)
+        equal_material = total_sheet_cost / num_parts if num_parts > 0 else 0
+
+        logger.info(f"[Alokacja Na Arkusz] Koszt arkuszy: {total_sheet_cost:.2f}, "
+                   f"Detali: {num_parts}, Mat/detal: {equal_material:.2f}")
 
         for part in self.parts_data:
             # Nie zmieniaj manualnych wartości L+M
             if not part.get('_manual_lm_cost', False):
-                base_lm = float(part.get('base_lm_cost', 0) or 0)
-                adjusted_lm = base_lm * sheet_multiplier
-                part['lm_cost'] = adjusted_lm
+                # Zmień TYLKO koszt materiału - reszta pozostaje stała
+                part['material_cost'] = equal_material
+                # Przelicz L+M jako sumę składników (cięcie, grawer, folia pozostają bez zmian)
+                part['lm_cost'] = (part['material_cost'] +
+                                  float(part.get('cutting_cost', 0) or 0) +
+                                  float(part.get('engraving_cost', 0) or 0) +
+                                  float(part.get('foil_cost', 0) or 0))
 
             lm_cost = float(part.get('lm_cost', 0) or 0)
             bending_cost = float(part.get('bending_cost', 0) or 0)
@@ -967,7 +1131,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         )
 
     def _update_summary(self):
-        """Aktualizuj podsumowanie"""
+        """Aktualizuj podsumowanie z sumami długości cięcia i graweru"""
         total_parts = len(self.parts_data)
         total_qty = sum(int(p.get('quantity', 1) or 1) for p in self.parts_data)
         total_lm = sum(float(p.get('lm_cost', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data)
@@ -975,9 +1139,20 @@ class DetailedPartsPanel(ctk.CTkFrame):
         total_bend_cost = sum(float(p.get('bending_cost', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data)
         total_all = sum(float(p.get('total_unit', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data)
 
+        # Sumy długości cięcia i graweru (z ilością)
+        total_cutting_mm = sum(float(p.get('cutting_len', 0) or 0) * int(p.get('quantity', 1) or 1)
+                              for p in self.parts_data)
+        total_engraving_mm = sum(float(p.get('engraving_len', 0) or 0) * int(p.get('quantity', 1) or 1)
+                                for p in self.parts_data)
+
+        # Konwersja na metry
+        total_cutting_m = total_cutting_mm / 1000.0
+        total_engraving_m = total_engraving_mm / 1000.0
+
         self.lbl_summary.configure(
-            text=f"Pozycji: {total_parts} | Suma qty: {total_qty} | "
-                 f"L+M: {total_lm:,.2f} | Bends: {total_bends} ({total_bend_cost:,.2f}) | Total: {total_all:,.2f} PLN"
+            text=f"Pozycji: {total_parts} | Qty: {total_qty} | "
+                 f"L+M: {total_lm:,.2f} | Bends: {total_bends} ({total_bend_cost:,.2f}) | Total: {total_all:,.2f} PLN\n"
+                 f"Suma cięcia: {total_cutting_m:,.2f} m | Suma graweru: {total_engraving_m:,.2f} m"
         )
 
         # Wywołaj callback do aktualizacji kosztów w głównym oknie
@@ -1225,23 +1400,42 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
         return price_table[closest]
 
-    def _calculate_lm_cost(self, part_data: Dict) -> float:
+    def _calculate_lm_cost(self, part_data: Dict) -> Dict[str, float]:
         """
-        Oblicz koszt L+M (Laser + Material) dla detalu.
+        Oblicz składniki kosztu L+M (Laser + Material) dla detalu.
 
-        Materiał: koszt z prostokąta otaczającego (bounding box) wg cennika
-        Cięcie: koszt na bazie długości cięcia z cenników
-        Grawer: koszt z długości graweru
-        Folia: koszt odparowania z powierzchni (tylko dla INOX ≤5mm)
+        Zwraca słownik z osobnymi składnikami:
+        - material_cost: koszt z prostokąta otaczającego (bounding box) wg cennika
+        - cutting_cost: koszt na bazie długości cięcia z cenników
+        - engraving_cost: koszt z długości graweru
+        - foil_cost: koszt odparowania folii (tylko dla INOX ≤5mm)
+        - total_lm: suma wszystkich składników
+
+        Model alokacji operuje TYLKO na material_cost - pozostałe są stałe.
         """
         material = part_data.get('material', '').upper()
         thickness = float(part_data.get('thickness', 0) or 0)
         width_mm = float(part_data.get('width', 0) or 0)
         height_mm = float(part_data.get('height', 0) or 0)
+        quantity = int(part_data.get('quantity', 1) or 1)
 
         # Długości cięcia
         cutting_len_mm = float(part_data.get('cutting_len', 0) or 0)
         engraving_len_mm = float(part_data.get('engraving_len', 0) or 0)
+
+        # Gestosc materialu
+        density = self.MATERIAL_DENSITIES.get(material, self.MATERIAL_DENSITIES['DEFAULT'])
+
+        # === START LOGGING ===
+        if cost_logger:
+            cost_logger.start_part(
+                part_name=part_data.get('name', '?'),
+                quantity=quantity,
+                material=material,
+                thickness=thickness,
+                width=width_mm,
+                height=height_mm
+            )
 
         # === KOSZT MATERIAŁU z bounding box ===
         # Oblicz wagę z bounding box
@@ -1253,31 +1447,95 @@ class DetailedPartsPanel(ctk.CTkFrame):
         mat_price = self._get_material_price(material, thickness)
         material_cost = weight_kg * mat_price
 
+        if cost_logger:
+            cost_logger.log_material(
+                weight_kg=weight_kg,
+                price_per_kg=mat_price,
+                cost=material_cost,
+                density=density
+            )
+
         # === KOSZT CIĘCIA z cennika ===
         cutting_price_per_m = self._get_cutting_price(material, thickness)
         cutting_len_m = cutting_len_mm / 1000.0
         cutting_cost = cutting_len_m * cutting_price_per_m
+
+        if cost_logger:
+            cost_logger.log_cutting(
+                length_mm=cutting_len_mm,
+                price_per_m=cutting_price_per_m,
+                cost=cutting_cost
+            )
 
         # === KOSZT GRAWERU ===
         engraving_len_m = engraving_len_mm / 1000.0
         engraving_price = self._get_engraving_price()
         engraving_cost = engraving_len_m * engraving_price
 
+        if cost_logger:
+            cost_logger.log_engraving(
+                length_mm=engraving_len_mm,
+                price_per_m=engraving_price,
+                cost=engraving_cost
+            )
+
         # === KOSZT ODPAROWANIA FOLII ===
         # Tylko dla INOX (1.4xxx) o grubości ≤5mm
         foil_cost = 0.0
         is_inox = material.startswith('1.4') or 'INOX' in material
-        if is_inox and thickness <= 5.0:
-            area_m2 = (width_mm * height_mm) / 1e6 if width_mm > 0 and height_mm > 0 else 0
+        foil_applicable = is_inox and thickness <= 5.0
+
+        if foil_applicable:
+            # Folia liczona z dlugosci ciecia + graweru (PLN/m)
+            foil_len_m = (cutting_len_mm + engraving_len_mm) / 1000.0
             foil_price = self._get_foil_removal_price(material, thickness)
-            foil_cost = area_m2 * foil_price
+            foil_cost = foil_len_m * foil_price
+
+            if cost_logger:
+                cost_logger.log_foil(
+                    area_m2=foil_len_m,
+                    price=foil_price,
+                    cost=foil_cost,
+                    applicable=True
+                )
+        else:
+            if cost_logger:
+                reason = "material nie jest INOX" if not is_inox else f"grubosc {thickness}mm > 5mm"
+                cost_logger.log_foil(applicable=False, reason=reason)
 
         total_lm = material_cost + cutting_cost + engraving_cost + foil_cost
+
+        # === END LOGGING ===
+        if cost_logger:
+            bending_cost = float(part_data.get('bending_cost', 0) or 0)
+            additional = float(part_data.get('additional', 0) or 0)
+            cost_logger.end_part(
+                total_lm=total_lm,
+                bending_cost=bending_cost,
+                additional=additional
+            )
 
         logger.debug(f"[LM Cost] {part_data.get('name', '?')}: mat={material_cost:.2f}, "
                     f"cut={cutting_cost:.2f}, engr={engraving_cost:.2f}, foil={foil_cost:.2f} = {total_lm:.2f}")
 
-        return total_lm
+        # Formuła dla folii
+        if foil_applicable:
+            foil_formula = f"{foil_len_m:.3f}m × {foil_price:.2f}PLN/m"
+        else:
+            foil_formula = "nie dotyczy" if not is_inox else f"grubość {thickness}mm > 5mm"
+
+        # Zwróć słownik ze wszystkimi składnikami - model alokacji operuje TYLKO na material_cost
+        return {
+            'material_cost': material_cost,
+            'cutting_cost': cutting_cost,
+            'engraving_cost': engraving_cost,
+            'foil_cost': foil_cost,
+            'total_lm': total_lm,
+            # Formuły dla logowania
+            'material_formula': f"{weight_kg:.3f}kg × {mat_price:.2f}PLN/kg",
+            'cutting_formula': f"{cutting_len_m:.3f}m × {cutting_price_per_m:.2f}PLN/m",
+            'foil_formula': foil_formula
+        }
 
     def _get_material_price(self, material: str, thickness: float) -> float:
         """Pobierz cenę materiału z cennika [PLN/kg]"""
@@ -1322,6 +1580,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
         for part in parts:
             weight = float(part.get('weight_kg', part.get('weight', 0)) or 0)
             cutting_len = float(part.get('cutting_len', part.get('cutting_length_mm', part.get('cutting_length', 0))) or 0)
+            # Mapowanie pola graweru: DXF loader uzywa 'marking_length_mm', panel uzywa 'engraving_len'
+            engraving_len = float(part.get('marking_length_mm',
+                                           part.get('engraving_len',
+                                                    part.get('engraving_length', 0))) or 0)
 
             part_data = {
                 'nr': self.next_nr,
@@ -1335,6 +1597,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 'additional': float(part.get('additional', 0) or 0),
                 'weight': weight,
                 'cutting_len': cutting_len,
+                'engraving_len': engraving_len,  # Dlugosc graweru
                 'piercing_count': int(part.get('piercing_count', 1) or 1),
                 'total_unit': 0.0,
                 'calc_with_material': self.calc_with_material_var.get(),
@@ -1351,7 +1614,19 @@ class DetailedPartsPanel(ctk.CTkFrame):
             if existing_lm > 0:
                 part_data['lm_cost'] = existing_lm
             else:
-                part_data['lm_cost'] = self._calculate_lm_cost(part_data)
+                # _calculate_lm_cost zwraca Dict ze skladnikami
+                costs = self._calculate_lm_cost(part_data)
+                part_data['material_cost'] = costs['material_cost']
+                part_data['cutting_cost'] = costs['cutting_cost']
+                part_data['engraving_cost'] = costs['engraving_cost']
+                part_data['foil_cost'] = costs['foil_cost']
+                part_data['base_material_cost'] = costs['material_cost']
+                part_data['lm_cost'] = costs['total_lm']
+                part_data['base_lm_cost'] = costs['total_lm']
+                # Zapisz formuly dla loggera
+                part_data['_material_formula'] = costs.get('material_formula', '')
+                part_data['_cutting_formula'] = costs.get('cutting_formula', '')
+                part_data['_foil_formula'] = costs.get('foil_formula', '')
 
             # Oblicz bending cost jesli sa giecia
             if part_data['bends'] > 0 and part_data['bending_cost'] == 0:

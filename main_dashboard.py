@@ -1054,8 +1054,17 @@ class MainDashboard(ctk.CTk):
         messagebox.showinfo("Generuj WZ", "Funkcja generowania WZ - w przygotowaniu")
 
     def _show_settings(self):
-        """Pokaż ustawienia"""
-        messagebox.showinfo("Ustawienia", "Panel ustawień - w przygotowaniu")
+        """Pokaż ustawienia kosztów"""
+        from orders.gui.settings_dialog import CostSettingsDialog
+
+        def on_settings_saved(settings):
+            logger.info(f"[MainDashboard] Cost settings saved: {settings}")
+
+        settings_dialog = CostSettingsDialog(self, on_save=on_settings_saved)
+        settings_dialog.attributes('-topmost', True)
+        settings_dialog.lift()
+        settings_dialog.focus_force()
+        settings_dialog.after(100, lambda: settings_dialog.attributes('-topmost', False))
 
     def _show_about(self):
         """Pokaż informacje o systemie"""

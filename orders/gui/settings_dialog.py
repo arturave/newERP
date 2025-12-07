@@ -363,14 +363,20 @@ class CostSettingsDialog(ctk.CTkToplevel):
         cost_path = CONFIG_PATH.parent / "cost_settings.json"
         default = {
             "sheet_handling_cost": 40.0,
-            "foil_removal_speed_m_min": 15.0,
-            "foil_removal_hourly_rate": 80.0,
+            "foil_cost_per_meter": 0.20,
             "piercing_time_inox_base_s": 0.5,
             "piercing_time_inox_per_mm_s": 0.1,
             "piercing_time_steel_base_s": 0.5,
             "piercing_time_steel_per_mm_s": 0.3,
             "time_buffer_percent": 25.0,
-            "default_markup_percent": 0.0
+            "default_markup_percent": 0.0,
+            # Koszty per zlecenie
+            "tech_cost_enabled": True,
+            "tech_cost_value": 50.0,
+            "packaging_cost_enabled": True,
+            "packaging_cost_value": 100.0,
+            "transport_cost_enabled": False,
+            "transport_cost_value": 0.0
         }
 
         try:
@@ -421,10 +427,20 @@ class CostSettingsDialog(ctk.CTkToplevel):
 
         # Grupa: Folia
         self._add_section(main, "🎞️ Usuwanie folii")
-        self._add_field(main, "foil_removal_speed_m_min", "Prędkość zdejmowania [m/min]:",
-                       self.settings["foil_removal_speed_m_min"])
-        self._add_field(main, "foil_removal_hourly_rate", "Stawka godzinowa [PLN/h]:",
-                       self.settings["foil_removal_hourly_rate"])
+        self._add_field(main, "foil_cost_per_meter", "Koszt usuwania folii [PLN/m]:",
+                       self.settings["foil_cost_per_meter"])
+
+        # Grupa: Koszty per zlecenie
+        self._add_section(main, "📋 Koszty per zlecenie")
+        self._add_checkbox_field(main, "tech_cost", "Technologia:",
+                                self.settings.get("tech_cost_enabled", True),
+                                self.settings.get("tech_cost_value", 50.0))
+        self._add_checkbox_field(main, "packaging_cost", "Opakowania:",
+                                self.settings.get("packaging_cost_enabled", True),
+                                self.settings.get("packaging_cost_value", 100.0))
+        self._add_checkbox_field(main, "transport_cost", "Transport:",
+                                self.settings.get("transport_cost_enabled", False),
+                                self.settings.get("transport_cost_value", 0.0))
 
         # Grupa: Przebicia
         self._add_section(main, "🔥 Przebicia (piercing)")
@@ -481,23 +497,78 @@ class CostSettingsDialog(ctk.CTkToplevel):
 
         self.entries[key] = entry
 
+    def _add_checkbox_field(self, parent, key: str, label: str, enabled: bool, value: float):
+        """Dodaj pole z checkboxem i wartością"""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", pady=3, padx=10)
+
+        # Checkbox
+        var_enabled = ctk.BooleanVar(value=enabled)
+        checkbox = ctk.CTkCheckBox(
+            row, text=label, variable=var_enabled,
+            width=200, font=ctk.CTkFont(size=11)
+        )
+        checkbox.pack(side="left")
+
+        # Wartość
+        entry = ctk.CTkEntry(row, width=100)
+        entry.insert(0, str(value))
+        entry.pack(side="left", padx=10)
+
+        ctk.CTkLabel(row, text="PLN", text_color=Theme.TEXT_SECONDARY,
+                    font=ctk.CTkFont(size=10)).pack(side="left")
+
+        # Zapisz referencje
+        self.entries[f"{key}_enabled"] = var_enabled
+        self.entries[f"{key}_value"] = entry
+
     def _save(self):
         """Zapisz ustawienia"""
         new_settings = {}
         for key, entry in self.entries.items():
             try:
-                new_settings[key] = float(entry.get())
-            except:
+                if isinstance(entry, ctk.BooleanVar):
+                    # Checkbox - boolean
+                    new_settings[key] = entry.get()
+                elif isinstance(entry, ctk.CTkEntry):
+                    # Entry - float
+                    new_settings[key] = float(entry.get())
+                else:
+                    # Inny typ - spróbuj skonwertować
+                    new_settings[key] = float(entry.get())
+            except Exception as e:
                 messagebox.showerror("Błąd", f"Nieprawidłowa wartość dla: {key}", parent=self)
                 return
 
         if self._save_cost_settings(new_settings):
+            # Zaktualizuj też Supabase jeśli dostępne
+            self._sync_to_supabase(new_settings)
             messagebox.showinfo("Sukces", "Ustawienia kosztów zapisane!", parent=self)
             if self.on_save:
                 self.on_save(new_settings)
             self.destroy()
         else:
             messagebox.showerror("Błąd", "Nie udało się zapisać ustawień", parent=self)
+
+    def _sync_to_supabase(self, settings: Dict):
+        """Synchronizuj kluczowe ustawienia z Supabase"""
+        try:
+            from core.supabase_client import get_supabase_client
+            client = get_supabase_client()
+
+            # Zaktualizuj foil_cost_per_meter w cost_config
+            if 'foil_cost_per_meter' in settings:
+                client.table('cost_config').upsert({
+                    'config_key': 'foil_cost_per_meter',
+                    'config_value': str(settings['foil_cost_per_meter']),
+                    'description': 'Koszt usuwania folii [PLN/m]'
+                }, on_conflict='config_key').execute()
+                logger.info(f"[CostSettings] Synced foil_cost_per_meter to Supabase: {settings['foil_cost_per_meter']}")
+
+        except ImportError:
+            logger.warning("[CostSettings] Supabase client not available")
+        except Exception as e:
+            logger.warning(f"[CostSettings] Failed to sync to Supabase: {e}")
 
 
 # Test

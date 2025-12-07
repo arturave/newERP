@@ -213,6 +213,12 @@ class OrderRepository:
                 # Pobierz pozycje
                 order['items'] = self._get_order_items(order_id)
 
+                # Pobierz pełne dane nestingu z nesting_results (jeśli istnieją)
+                nesting_data = self.get_nesting_result(order_id)
+                if nesting_data:
+                    order['nesting_full_data'] = nesting_data
+                    logger.info(f"[OrderRepository] Loaded full nesting data for order {order_id}")
+
                 logger.debug(f"[OrderRepository] Found order: {order_id}")
                 return order
 
@@ -495,19 +501,176 @@ class OrderRepository:
 
         serialized = {}
         for key, value in results.items():
-            if hasattr(value, '__dict__'):
-                serialized[str(key)] = {
+            if hasattr(value, 'to_dict'):
+                # Pełna serializacja jeśli obiekt ma metodę to_dict
+                serialized[str(key)] = value.to_dict()
+            elif hasattr(value, '__dict__'):
+                # Fallback - podstawowe metryki + pełne dane jeśli dostępne
+                data = {
                     'sheets_used': getattr(value, 'sheets_used', 0),
                     'efficiency': getattr(value, 'total_efficiency', 0),
                     'placed_parts': len(getattr(value, 'placed_parts', [])),
                     'total_cost': getattr(value, 'total_cost', 0)
                 }
+                # Zapisz pełne dane arkuszy jeśli dostępne
+                if hasattr(value, 'sheets'):
+                    data['sheets'] = self._serialize_sheets(value.sheets)
+                serialized[str(key)] = data
             elif isinstance(value, dict):
                 serialized[str(key)] = value
             else:
                 serialized[str(key)] = str(value)
 
         return serialized
+
+    def _serialize_sheets(self, sheets) -> list:
+        """Serializuj pełne dane arkuszy nestingu"""
+        serialized_sheets = []
+        for i, sheet in enumerate(sheets):
+            sheet_data = {
+                'sheet_index': i,
+                'sheet_width': getattr(sheet, 'sheet_width', 3000),
+                'sheet_height': getattr(sheet, 'sheet_height', 1500),
+                'efficiency': getattr(sheet, 'efficiency', 0),
+                'placed_parts': []
+            }
+
+            # Zapisz pozycje detali
+            placed_parts = getattr(sheet, 'placed_parts', [])
+            for part in placed_parts:
+                part_data = {
+                    'name': getattr(part, 'name', ''),
+                    'x': getattr(part, 'x', 0),
+                    'y': getattr(part, 'y', 0),
+                    'width': getattr(part, 'width', 0),
+                    'height': getattr(part, 'height', 0),
+                    'rotation': getattr(part, 'rotation', 0),
+                    'quantity': getattr(part, 'quantity', 1),
+                }
+                # Zapisz kontur jeśli dostępny
+                if hasattr(part, 'contour'):
+                    part_data['contour'] = list(part.contour) if part.contour else []
+                if hasattr(part, 'perimeter'):
+                    part_data['perimeter'] = part.perimeter
+                sheet_data['placed_parts'].append(part_data)
+
+            serialized_sheets.append(sheet_data)
+
+        return serialized_sheets
+
+    # ============================================================
+    # Nesting Results - Full Save/Load
+    # ============================================================
+
+    def save_nesting_result(self, order_id: str, nesting_result, material: str = '', thickness: float = 0) -> Optional[str]:
+        """
+        Zapisz pełne dane nestingu do tabeli nesting_results.
+
+        Args:
+            order_id: ID zamówienia
+            nesting_result: Obiekt wyniku nestingu
+            material: Materiał
+            thickness: Grubość
+
+        Returns:
+            ID zapisanego rekordu lub None
+        """
+        try:
+            # Przygotuj pełne dane
+            nesting_data = None
+            if hasattr(nesting_result, 'to_dict'):
+                nesting_data = nesting_result.to_dict()
+            elif hasattr(nesting_result, '__dict__'):
+                nesting_data = {
+                    'sheets': self._serialize_sheets(getattr(nesting_result, 'sheets', [])),
+                    'total_efficiency': getattr(nesting_result, 'total_efficiency', 0),
+                    'sheets_used': len(getattr(nesting_result, 'sheets', [])),
+                }
+
+            record = {
+                'id': str(uuid.uuid4()),
+                'context_type': 'order',
+                'context_id': order_id,
+                'material': material,
+                'thickness': float(thickness),
+                'sheet_format': '3000x1500',  # Domyślny format
+                'sheets_used': len(getattr(nesting_result, 'sheets', [])),
+                'utilization': getattr(nesting_result, 'total_efficiency', 0),
+                'total_cutting_length': 0,  # Do obliczenia
+                'total_pierces': 0,  # Do obliczenia
+                'nesting_data': json.dumps(nesting_data) if nesting_data else None,
+                'created_at': datetime.now().isoformat()
+            }
+
+            response = self.client.table('nesting_results').insert(record).execute()
+
+            if response.data:
+                logger.info(f"[OrderRepository] Nesting result saved: {record['id']}")
+                return response.data[0]['id']
+
+            return None
+
+        except Exception as e:
+            logger.error(f"[OrderRepository] Error saving nesting result: {e}")
+            return None
+
+    def get_nesting_result(self, order_id: str) -> Optional[Dict]:
+        """
+        Pobierz pełne dane nestingu dla zamówienia.
+
+        Args:
+            order_id: ID zamówienia
+
+        Returns:
+            Pełne dane nestingu lub None
+        """
+        try:
+            response = self.client.table('nesting_results').select('*').eq(
+                'context_id', order_id
+            ).eq('context_type', 'order').order('created_at', desc=True).limit(1).execute()
+
+            if response.data:
+                result = response.data[0]
+
+                # Deserializuj nesting_data
+                if result.get('nesting_data'):
+                    try:
+                        if isinstance(result['nesting_data'], str):
+                            result['nesting_data'] = json.loads(result['nesting_data'])
+                    except:
+                        pass
+
+                logger.debug(f"[OrderRepository] Loaded nesting result for order {order_id}")
+                return result
+
+            return None
+
+        except Exception as e:
+            logger.error(f"[OrderRepository] Error getting nesting result: {e}")
+            return None
+
+    def get_all_nesting_results(self, order_id: str) -> List[Dict]:
+        """Pobierz wszystkie wyniki nestingu dla zamówienia (historia)"""
+        try:
+            response = self.client.table('nesting_results').select('*').eq(
+                'context_id', order_id
+            ).eq('context_type', 'order').order('created_at', desc=True).execute()
+
+            results = response.data or []
+
+            for result in results:
+                if result.get('nesting_data'):
+                    try:
+                        if isinstance(result['nesting_data'], str):
+                            result['nesting_data'] = json.loads(result['nesting_data'])
+                    except:
+                        pass
+
+            return results
+
+        except Exception as e:
+            logger.error(f"[OrderRepository] Error getting nesting results: {e}")
+            return []
 
 
 # ============================================================
