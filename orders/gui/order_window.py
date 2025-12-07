@@ -1646,6 +1646,7 @@ class OrderWindow(ctk.CTkToplevel):
         # Wczytaj ustawienia UI
         self.ui_settings = load_ui_settings()
         self.show_nesting_panel_var = ctk.BooleanVar(value=self.ui_settings.get("show_nesting_panel", True))
+        self.save_to_catalog_var = ctk.BooleanVar(value=False)  # Domyślnie wyłączony
 
         logger.info(f"[OrderWindow] Opening order: {self.order_id}")
 
@@ -1713,6 +1714,15 @@ class OrderWindow(ctk.CTkToplevel):
             width=130, height=32
         )
         self.chk_show_nesting.pack(side="left", padx=(10, 3))
+
+        # Checkbox "Zapisz do katalogu"
+        self.chk_save_catalog = ctk.CTkCheckBox(
+            btn_frame, text="Do katalogu",
+            variable=self.save_to_catalog_var,
+            font=ctk.CTkFont(size=11),
+            width=100, height=32
+        )
+        self.chk_save_catalog.pack(side="left", padx=(5, 3))
 
         ctk.CTkButton(btn_frame, text="Nesting", command=self._run_nesting,
                       fg_color=Theme.ACCENT_WARNING, width=90, height=32).pack(side="left", padx=3)
@@ -2274,6 +2284,20 @@ class OrderWindow(ctk.CTkToplevel):
 
             if success:
                 logger.info(f"[OrderWindow] === ORDER SAVED SUCCESSFULLY === {self.order_id}")
+
+                # Zapisz detale do katalogu produktów (jeśli zaznaczono)
+                if self.save_to_catalog_var.get():
+                    try:
+                        from orders.repository import OrderRepository
+                        from core.supabase_client import get_supabase_client
+
+                        client = get_supabase_client()
+                        repo = OrderRepository(client)
+                        saved_ids = repo.save_parts_to_catalog(parts, self.order_id)
+                        logger.info(f"[OrderWindow] Saved {len(saved_ids)} parts to catalog")
+                    except Exception as e:
+                        logger.error(f"[OrderWindow] Error saving to catalog: {e}")
+
                 self._show_message("info", "Sukces", f"Zamówienie '{info['name']}' zapisane")
                 self.lbl_status.configure(text=f"Zapisano: {info['name']}")
 

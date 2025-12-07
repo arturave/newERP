@@ -688,6 +688,13 @@ class DetailedPartsPanel(ctk.CTkFrame):
         )
         btn_add_3d.pack(side="left", padx=2)
 
+        btn_from_catalog = ctk.CTkButton(
+            filter_frame, text="Z katalogu", width=70, height=24,
+            fg_color="#6366f1", hover_color="#5855e0",
+            font=ctk.CTkFont(size=10), command=self._open_catalog_picker
+        )
+        btn_from_catalog.pack(side="left", padx=2)
+
         btn_duplicate = ctk.CTkButton(
             filter_frame, text="Dup", width=40, height=24,
             fg_color=Theme.ACCENT_PRIMARY, hover_color="#7c4fe0",
@@ -790,33 +797,162 @@ class DetailedPartsPanel(ctk.CTkFrame):
         """Pokaż okno pomocy z opisem modeli alokacji"""
         AllocationHelpDialog(self.winfo_toplevel())
 
-    def _open_debug_log(self):
-        """Otwórz okno z logiem obliczeń kosztów i zapisz do pliku"""
-        # Zapisz log do pliku w logs/costs/
-        if get_cost_logger is not None:
-            try:
-                filepath = save_cost_log()
-                logger.info(f"[DetailedParts] Zapisano log kosztów do: {filepath}")
-            except Exception as e:
-                logger.error(f"[DetailedParts] Błąd zapisu logu: {e}")
+    def _generate_cost_report(self) -> str:
+        """Generuj szczegółowy raport z ostatnich obliczeń kosztów"""
+        from datetime import datetime
 
-        # Otwórz okno debugowe
+        if not self.parts_data:
+            return "Brak detali do wyświetlenia."
+
+        allocation_model = self.allocation_model_var.get()
+
+        lines = [
+            "=" * 65,
+            "RAPORT KALKULACJI KOSZTÓW",
+            f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Model alokacji: {allocation_model}",
+            "=" * 65,
+            ""
+        ]
+
+        for part in self.parts_data:
+            nr = part.get('nr', '?')
+            name = part.get('name', 'Bez nazwy')
+            material = part.get('material', '?')
+            thickness = part.get('thickness', 0)
+            qty = part.get('quantity', 1)
+
+            lines.extend([
+                f"[{nr}] {name}",
+                f"    Materiał: {material} {thickness}mm × {qty}szt",
+                f"    Waga: {part.get('weight_kg', 0):.3f} kg",
+                "",
+                "    SKŁADNIKI KOSZTOWE:",
+                f"      Materiał:   {part.get('material_cost', 0):>10.2f} PLN  {part.get('_material_formula', '')}",
+                f"      Cięcie:     {part.get('cutting_cost', 0):>10.2f} PLN  ({part.get('cutting_len', 0)/1000:.3f}m × PLN/m)",
+                f"      Grawer:     {part.get('engraving_cost', 0):>10.2f} PLN  ({part.get('engraving_len', 0)/1000:.3f}m)",
+                f"      Folia:      {part.get('foil_cost', 0):>10.2f} PLN  {part.get('_foil_formula', '')}",
+                f"      ─────────────────────────────────",
+                f"      L+M:        {part.get('lm_cost', 0):>10.2f} PLN",
+                "",
+                f"      Gięcie:     {part.get('bending_cost', 0):>10.2f} PLN  ({part.get('bends', 0)} gięć × {self.BEND_PRICE:.2f})",
+                f"      Dodatkowe:  {part.get('additional', 0):>10.2f} PLN",
+                f"      ═════════════════════════════════",
+                f"      TOTAL/szt:  {part.get('total_unit', 0):>10.2f} PLN",
+                f"      TOTAL×{qty}:   {part.get('total_unit', 0) * qty:>10.2f} PLN",
+                ""
+            ])
+
+        # Podsumowanie
+        total_material = sum(float(p.get('material_cost', 0) or 0) for p in self.parts_data)
+        total_cutting = sum(float(p.get('cutting_cost', 0) or 0) for p in self.parts_data)
+        total_engraving = sum(float(p.get('engraving_cost', 0) or 0) for p in self.parts_data)
+        total_foil = sum(float(p.get('foil_cost', 0) or 0) for p in self.parts_data)
+        total_lm = sum(float(p.get('lm_cost', 0) or 0) for p in self.parts_data)
+        total_bending = sum(float(p.get('bending_cost', 0) or 0) for p in self.parts_data)
+        total_all = sum(float(p.get('total_unit', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data)
+
+        # Sumy długości
+        total_cutting_m = sum(float(p.get('cutting_len', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data) / 1000
+        total_engraving_m = sum(float(p.get('engraving_len', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data) / 1000
+
+        lines.extend([
+            "-" * 65,
+            "PODSUMOWANIE (sumy jednostkowe)",
+            "-" * 65,
+            f"  Materiał:         {total_material:>12.2f} PLN",
+            f"  Cięcie:           {total_cutting:>12.2f} PLN  ({total_cutting_m:.2f} m)",
+            f"  Grawer:           {total_engraving:>12.2f} PLN  ({total_engraving_m:.2f} m)",
+            f"  Folia:            {total_foil:>12.2f} PLN",
+            f"  L+M razem:        {total_lm:>12.2f} PLN",
+            f"  Gięcie:           {total_bending:>12.2f} PLN",
+            "",
+            "=" * 65,
+            f"  SUMA (z ilościami): {total_all:>12.2f} PLN",
+            "=" * 65,
+            "",
+            "UWAGI:",
+            f"  - Model alokacji ({allocation_model}) wpływa tylko na koszt materiału",
+            "  - Koszty cięcia, graweru, folii są STAŁE (zależą od geometrii)",
+        ])
+
+        return "\n".join(lines)
+
+    def _open_debug_log(self):
+        """Otwórz okno z raportem kalkulacji kosztów"""
+        # Wygeneruj raport jeśli nie ma
+        if not hasattr(self, '_last_cost_report') or not self._last_cost_report:
+            self._last_cost_report = self._generate_cost_report()
+
+        report = self._last_cost_report
+
+        # Zapisz do pliku
+        filepath = self._save_cost_report_to_file(report)
+
+        # Pokaż okno z raportem
+        self._show_cost_report_window(report, filepath)
+
+    def _save_cost_report_to_file(self, report: str) -> str:
+        """Zapisz raport do pliku w logs/costs/"""
+        import os
+        from datetime import datetime
+
+        log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'logs', 'costs')
+        os.makedirs(log_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        order_name = getattr(self, 'order_name', 'unknown')
+        safe_name = "".join(c if c.isalnum() or c in '-_' else '_' for c in str(order_name))
+        filename = f"cost_report_{timestamp}_{safe_name}.log"
+        filepath = os.path.join(log_dir, filename)
+
         try:
-            from orders.gui.cost_debug_window import CostDebugWindow
-            CostDebugWindow(self.winfo_toplevel())
-        except ImportError as e:
-            # Fallback - pokaż raport w messagebox
-            if get_cost_logger is not None:
-                try:
-                    report = get_cost_report()
-                    # Skróć raport dla messagebox
-                    if len(report) > 2000:
-                        report = report[:2000] + "\n\n... (skrócono, pełny raport w pliku)"
-                    messagebox.showinfo("Raport kosztów", report)
-                except Exception:
-                    messagebox.showerror("Błąd", f"Nie można otworzyć okna logu: {e}")
-            else:
-                messagebox.showerror("Błąd", f"Nie można otworzyć okna logu: {e}")
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(report)
+            logger.info(f"[DetailedParts] Zapisano raport do: {filepath}")
+        except Exception as e:
+            logger.error(f"[DetailedParts] Błąd zapisu raportu: {e}")
+            filepath = ""
+
+        return filepath
+
+    def _show_cost_report_window(self, report: str, filepath: str):
+        """Pokaż okno z raportem kosztów"""
+        window = ctk.CTkToplevel(self)
+        window.title("Raport kalkulacji kosztów")
+        window.geometry("750x650")
+        window.transient(self.winfo_toplevel())
+
+        # Textbox z raportem
+        textbox = ctk.CTkTextbox(
+            window,
+            font=("Consolas", 11),
+            fg_color=Theme.BG_CARD,
+            text_color=Theme.TEXT_PRIMARY,
+            wrap="none"
+        )
+        textbox.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        textbox.insert("1.0", report)
+        textbox.configure(state="disabled")
+
+        # Footer z info o pliku
+        footer_frame = ctk.CTkFrame(window, fg_color="transparent")
+        footer_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        if filepath:
+            ctk.CTkLabel(
+                footer_frame,
+                text=f"Zapisano: {filepath}",
+                font=ctk.CTkFont(size=10),
+                text_color=Theme.TEXT_MUTED
+            ).pack(side="left")
+
+        ctk.CTkButton(
+            footer_frame,
+            text="Zamknij",
+            command=window.destroy,
+            width=80
+        ).pack(side="right")
 
     def enable_allocation_model(self):
         """Włącz dropdown alokacji po wykonaniu nestingu"""
@@ -937,6 +1073,9 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 log_part_cost(part)
 
         self._update_summary()
+
+        # Krok 5: Generuj raport kosztów (do wyświetlenia w oknie debug)
+        self._last_cost_report = self._generate_cost_report()
 
     def _recalculate_part_base(self, idx: int):
         """Oblicz bazowe koszty dla detalu (bez alokacji) - respektuje manualne wartości.
@@ -1262,6 +1401,108 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
             if self.on_parts_change:
                 self.on_parts_change(self.parts_data)
+
+    def _open_catalog_picker(self):
+        """Otwórz okno wyboru produktów z katalogu"""
+        try:
+            from orders.gui.product_catalog_picker import ProductCatalogPicker
+            picker = ProductCatalogPicker(
+                self.winfo_toplevel(),
+                on_select_callback=self.add_from_catalog
+            )
+        except ImportError as e:
+            logger.error(f"[DetailedParts] Cannot import ProductCatalogPicker: {e}")
+            messagebox.showerror("Błąd", "Moduł ProductCatalogPicker niedostępny")
+        except Exception as e:
+            logger.error(f"[DetailedParts] Error opening catalog picker: {e}")
+            messagebox.showerror("Błąd", f"Nie można otworzyć katalogu: {e}")
+
+    def add_from_catalog(self, product_ids: list):
+        """Dodaj produkty z katalogu do listy detali (bez nestingu/DXF)"""
+        if not product_ids:
+            return
+
+        try:
+            from core.supabase_client import get_supabase_client
+            from products.repository import ProductRepository
+
+            client = get_supabase_client()
+            product_repo = ProductRepository(client)
+
+            added = 0
+            for product_id in product_ids:
+                product = product_repo.get_by_id(product_id)
+                if not product:
+                    logger.warning(f"[DetailedParts] Product not found: {product_id}")
+                    continue
+
+                # Pobierz nazwę materiału
+                material_name = 'S355'  # Domyślny
+                if product.get('materials_dict'):
+                    material_name = product['materials_dict'].get('name', material_name)
+
+                part_data = {
+                    'nr': self.next_nr,
+                    'name': product.get('name', 'Bez nazwy'),
+                    'material': material_name,
+                    'thickness': float(product.get('thickness_mm', 0) or 0),
+                    'quantity': 1,
+                    'weight_kg': float(product.get('weight_kg', 0) or 0),
+                    'cutting_len': float(product.get('cutting_length_mm', 0) or 0),
+                    'engraving_len': float(product.get('engraving_length_mm', 0) or 0),
+                    'bends': int(product.get('bends_count', 0) or 0),
+                    'width': float(product.get('width_mm', 0) or 0),
+                    'height': float(product.get('height_mm', 0) or 0),
+                    'source': 'catalog',
+                    'catalog_id': product_id,
+                    'filepath': product.get('cad_2d_path', ''),
+                    'lm_cost': 0.0,
+                    'bending_cost': 0.0,
+                    'additional': 0.0,
+                    'total_unit': 0.0,
+                    'calc_with_material': self.calc_with_material_var.get(),
+                }
+
+                # Oblicz koszty
+                costs = self._calculate_lm_cost(part_data)
+                part_data.update({
+                    'material_cost': costs['material_cost'],
+                    'cutting_cost': costs['cutting_cost'],
+                    'engraving_cost': costs['engraving_cost'],
+                    'foil_cost': costs['foil_cost'],
+                    'lm_cost': costs['total_lm'],
+                    'base_lm_cost': costs['total_lm'],
+                    'base_material_cost': costs['material_cost'],
+                    '_material_formula': costs.get('material_formula', ''),
+                    '_cutting_formula': costs.get('cutting_formula', ''),
+                    '_foil_formula': costs.get('foil_formula', ''),
+                })
+
+                if part_data['bends'] > 0:
+                    part_data['bending_cost'] = part_data['bends'] * self.BEND_PRICE
+
+                part_data['total_unit'] = (
+                    part_data['lm_cost'] +
+                    part_data['bending_cost'] +
+                    part_data['additional']
+                )
+
+                self.next_nr += 1
+                self.parts_data.append(part_data)
+                added += 1
+                logger.info(f"[DetailedParts] Added from catalog: {part_data['name']}")
+
+            if added > 0:
+                self._refresh_table()
+                self._update_summary()
+                messagebox.showinfo("Sukces", f"Dodano {added} produktów z katalogu")
+
+                if self.on_parts_change:
+                    self.on_parts_change(self.parts_data)
+
+        except Exception as e:
+            logger.error(f"[DetailedParts] Error adding from catalog: {e}")
+            messagebox.showerror("Błąd", f"Nie można dodać produktów: {e}")
 
     def _duplicate_part(self):
         """Duplikuj zaznaczony detal"""

@@ -16,7 +16,7 @@ Zasady:
 - Graceful error handling (zwraca None zamiast wyjątków)
 """
 
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Set
 from datetime import datetime
 import getpass
 
@@ -96,7 +96,92 @@ class ProductRepository:
         except Exception as e:
             print(f"[DB] ❌ Create product failed: {e}")
             return None
-    
+
+    def create_batch(self, products: List[Dict[str, Any]]) -> List[str]:
+        """
+        Batch insert produktów (optymalizacja: 1 zapytanie).
+
+        Args:
+            products: Lista danych produktów
+
+        Returns:
+            Lista UUID utworzonych produktów
+        """
+        if not products:
+            return []
+
+        try:
+            # Dodaj pola audytu do wszystkich
+            current_user = self._get_current_user()
+            now = datetime.now().isoformat()
+
+            for p in products:
+                p.setdefault('created_by', current_user)
+                p.setdefault('updated_by', current_user)
+                p.setdefault('created_at', now)
+                p.setdefault('updated_at', now)
+                p.setdefault('is_active', True)
+
+            # Usuń wartości None
+            clean_products = [
+                {k: v for k, v in p.items() if v is not None}
+                for p in products
+            ]
+
+            response = self.client.table(self.TABLE).insert(clean_products).execute()
+
+            if response.data:
+                ids = [row['id'] for row in response.data]
+                print(f"[DB] ✅ Batch created {len(ids)} products")
+                return ids
+
+            return []
+
+        except Exception as e:
+            print(f"[DB] ❌ Batch create failed: {e}")
+            return []
+
+    def find_existing_batch(self, specs: List[Tuple[str, float]]) -> Dict[Tuple[str, float], str]:
+        """
+        Batch znajdź istniejące produkty po (name, thickness).
+
+        Optymalizacja: 1 zapytanie zamiast N.
+
+        Args:
+            specs: Lista krotek (nazwa, grubość)
+
+        Returns:
+            Dict[(name, thickness)] -> product_id
+        """
+        if not specs:
+            return {}
+
+        try:
+            # Pobierz unikalne grubości
+            thicknesses = list(set(s[1] for s in specs))
+
+            response = self.client.table(self.TABLE)\
+                .select('id, name, thickness_mm')\
+                .eq('is_active', True)\
+                .in_('thickness_mm', thicknesses)\
+                .execute()
+
+            # Buduj mapę wyników
+            result = {}
+            specs_set = set(specs)
+
+            for row in response.data or []:
+                key = (row['name'], float(row['thickness_mm']))
+                if key in specs_set:
+                    result[key] = row['id']
+
+            print(f"[DB] Found {len(result)}/{len(specs)} existing products")
+            return result
+
+        except Exception as e:
+            print(f"[DB] ❌ find_existing_batch failed: {e}")
+            return {}
+
     # =========================================================
     # READ
     # =========================================================

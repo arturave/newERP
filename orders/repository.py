@@ -672,6 +672,90 @@ class OrderRepository:
             logger.error(f"[OrderRepository] Error getting nesting results: {e}")
             return []
 
+    def save_parts_to_catalog(self, parts: List[Dict], order_id: str = None) -> List[str]:
+        """
+        Zapisz detale z zamówienia do products_catalog w Supabase.
+
+        Optymalizacja:
+        - Batch sprawdzanie istniejących produktów (1 zapytanie)
+        - Batch insert nowych produktów (1 zapytanie)
+        - Target: <100ms/produkt
+
+        Args:
+            parts: Lista detali z zamówienia
+            order_id: ID zamówienia (opcjonalne, dla opisu)
+
+        Returns:
+            Lista UUID zapisanych/znalezionych produktów
+        """
+        import time
+        from core.supabase_client import get_supabase_client
+        from products.repository import ProductRepository
+
+        if not parts:
+            return []
+
+        start = time.time()
+
+        try:
+            # Użyj tego samego klienta lub utwórz nowy
+            client = self.client or get_supabase_client()
+            product_repo = ProductRepository(client)
+
+            # KROK 1: Batch sprawdź istniejące produkty
+            specs_to_check = [
+                (p.get('name', ''), float(p.get('thickness', 0) or 0))
+                for p in parts
+            ]
+            existing_map = product_repo.find_existing_batch(specs_to_check)
+
+            # KROK 2: Przygotuj dane do batch insert
+            new_products = []
+            saved_ids = []
+            now = datetime.now().isoformat()
+
+            for part in parts:
+                key = (part.get('name', ''), float(part.get('thickness', 0) or 0))
+
+                if key in existing_map:
+                    saved_ids.append(existing_map[key])
+                    continue
+
+                # Przygotuj rekord do insertu
+                new_products.append({
+                    'name': part.get('name', ''),
+                    'thickness_mm': float(part.get('thickness', 0) or 0),
+                    'description': f"Z zamówienia {order_id}" if order_id else "Import z zamówienia",
+                    'weight_kg': float(part.get('weight_kg', 0) or 0),
+                    'cutting_length_mm': float(part.get('cutting_len', 0) or 0),
+                    'engraving_length_mm': float(part.get('engraving_len', 0) or 0),
+                    'bends_count': int(part.get('bends', 0) or 0),
+                    'width_mm': float(part.get('width', 0) or 0),
+                    'height_mm': float(part.get('height', 0) or 0),
+                    'source_order_id': order_id,
+                    'cad_2d_path': part.get('filepath', ''),
+                    'is_active': True,
+                    'created_at': now,
+                })
+
+            # KROK 3: Batch insert
+            if new_products:
+                new_ids = product_repo.create_batch(new_products)
+                saved_ids.extend(new_ids)
+
+            elapsed = time.time() - start
+            per_part = elapsed * 1000 / len(parts) if parts else 0
+            logger.info(
+                f"[OrderRepository] Saved {len(saved_ids)} parts to catalog "
+                f"in {elapsed*1000:.0f}ms ({per_part:.0f}ms/part)"
+            )
+
+            return saved_ids
+
+        except Exception as e:
+            logger.error(f"[OrderRepository] Error saving parts to catalog: {e}")
+            return []
+
 
 # ============================================================
 # SQL Migration for orders table
