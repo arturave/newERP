@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 
+# PROGI DECYZYJNE
+FULL_SHEET_THRESHOLD = 0.94  # Jesli maxY >= 94% dlugosci arkusza, uzyj pelny arkusz
+
+
 class SheetMode(Enum):
     """Sheet sizing mode."""
     FIXED_SHEET = "FIXED_SHEET"          # Standard sheet format
@@ -38,10 +42,37 @@ class SheetSpec:
 
     @property
     def area_used_mm2(self) -> float:
-        """Calculate actual sheet area used."""
+        """
+        Calculate actual sheet area used.
+
+        REGULA 94%:
+        Jesli uzyta dlugosc (maxY z nestingu) >= 94% dlugosci nominalnej arkusza,
+        traktujemy arkusz jako pelny - pozostaly pasek jest za maly do dalszego
+        wykorzystania i zostanie zlomowany.
+
+        Returns:
+            Powierzchnia uzyta [mm2]
+        """
         if self.mode == SheetMode.CUT_TO_LENGTH and self.used_length_y_mm is not None:
+            # Sprawdz regule 94%
+            utilization_ratio = self.used_length_y_mm / self.length_mm_nominal
+            if utilization_ratio >= FULL_SHEET_THRESHOLD:
+                # Uzyj pelny arkusz - pozostaly pasek zbyt maly
+                return self.width_mm * self.length_mm_nominal
+            # Standardowy tryb CUT_TO_LENGTH
             return self.width_mm * (self.used_length_y_mm + self.trim_margin_y_mm)
         return self.width_mm * self.length_mm_nominal
+
+    def should_use_full_sheet(self) -> bool:
+        """
+        Sprawdz czy nalezy uzyc pelnego arkusza (regula 94%).
+
+        Returns:
+            True jesli maxY >= 94% dlugosci nominalnej
+        """
+        if self.used_length_y_mm is None:
+            return True  # Brak danych - zakładamy pelny arkusz
+        return (self.used_length_y_mm / self.length_mm_nominal) >= FULL_SHEET_THRESHOLD
 
     @property
     def area_used_m2(self) -> float:

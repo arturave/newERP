@@ -183,25 +183,20 @@ class CostEngine:
     def __init__(self, pricing_tables=None):
         """
         Args:
-            pricing_tables: Opcjonalny obiekt PricingTables z cenników
+            pricing_tables: DEPRECATED - ignorowany, uzywany PricingDataCache
         """
-        self.pricing_tables = pricing_tables
+        # UWAGA: pricing_tables ignorowany - wszystkie dane z PricingDataCache
+        self.pricing_tables = None  # Nie uzywaj PricingTables!
         self._callbacks: List[Callable] = []
         self._cache: Dict = {}
+        self._pricing_cache = None  # Lazy init
 
-        # Załaduj cenniki jeśli nie podano
-        if not self.pricing_tables:
-            self._load_pricing_tables()
-
-    def _load_pricing_tables(self):
-        """Załaduj cenniki z modułu pricing"""
-        try:
-            from quotations.pricing.pricing_tables import get_pricing_tables
-            self.pricing_tables = get_pricing_tables()
-            logger.info("[CostEngine] Pricing tables loaded")
-        except Exception as e:
-            logger.warning(f"[CostEngine] Could not load pricing tables: {e}")
-            self.pricing_tables = None
+    def _get_pricing_cache(self):
+        """Pobierz singleton PricingDataCache"""
+        if self._pricing_cache is None:
+            from core.pricing_cache import get_pricing_cache
+            self._pricing_cache = get_pricing_cache()
+        return self._pricing_cache
 
     # ============================================================
     # CALLBACKS
@@ -245,28 +240,44 @@ class CostEngine:
         return MATERIAL_DENSITIES.get(material, 7850)
 
     def _get_cutting_rate(self, material: str, thickness: float) -> float:
-        """Pobierz cenę cięcia [PLN/m]"""
-        # Najpierw próbuj z PricingTables
-        if self.pricing_tables:
-            try:
-                mat_type = self._get_material_type(material)
-                rate = self.pricing_tables.get_cutting_rate(mat_type, thickness)
-                if rate:
-                    return rate.cost_per_meter
-            except Exception:
-                pass
+        """
+        Pobierz cene ciecia [PLN/m].
+
+        Zrodlo: PricingDataCache -> Supabase cutting_prices
+        Fallback: DEFAULT_RATES
+        """
+        cache = self._get_pricing_cache()
+
+        # Probuj z PricingDataCache
+        if cache.is_loaded:
+            rate = cache.get_cutting_price(material, thickness)
+            if rate is not None:
+                return rate
 
         # Fallback do DEFAULT_RATES
         mat_type = self._get_material_type(material)
         rates = DEFAULT_RATES['cutting_pln_per_m'].get(mat_type, DEFAULT_RATES['cutting_pln_per_m']['steel'])
 
-        # Znajdź najbliższą grubość
         thicknesses = sorted(rates.keys())
         closest = min(thicknesses, key=lambda x: abs(x - thickness))
         return rates[closest]
 
     def _get_pierce_rate(self, material: str, thickness: float) -> float:
-        """Pobierz cenę przebicia [PLN/szt]"""
+        """
+        Pobierz cene przebicia [PLN/szt].
+
+        Zrodlo: PricingDataCache -> Supabase piercing_rates
+        Fallback: DEFAULT_RATES
+        """
+        cache = self._get_pricing_cache()
+
+        # Probuj z PricingDataCache
+        if cache.is_loaded:
+            rate = cache.get_piercing_rate(material, thickness)
+            if rate is not None:
+                return rate
+
+        # Fallback do DEFAULT_RATES
         mat_type = self._get_material_type(material)
         rates = DEFAULT_RATES['pierce_pln'].get(mat_type, DEFAULT_RATES['pierce_pln']['steel'])
 
@@ -275,14 +286,19 @@ class CostEngine:
         return rates[closest]
 
     def _get_material_price(self, material: str, thickness: float) -> float:
-        """Pobierz cenę materiału [PLN/kg]"""
-        if self.pricing_tables:
-            try:
-                price = self.pricing_tables.get_material_price(material, thickness)
-                if price:
-                    return price.price_per_kg
-            except Exception:
-                pass
+        """
+        Pobierz cene materialu [PLN/kg].
+
+        Zrodlo: PricingDataCache -> Supabase material_prices
+        Fallback: DEFAULT_RATES
+        """
+        cache = self._get_pricing_cache()
+
+        # Probuj z PricingDataCache
+        if cache.is_loaded:
+            price = cache.get_material_price(material, thickness)
+            if price is not None:
+                return price
 
         # Fallback
         mat_type = self._get_material_type(material)
@@ -290,52 +306,54 @@ class CostEngine:
         return default_prices.get(mat_type, 5.0)
 
     def _get_bending_rate(self, thickness: float) -> float:
-        """Pobierz cenę gięcia [PLN/gięcie]"""
-        if self.pricing_tables:
-            try:
-                rate = self.pricing_tables.get_bending_rate(thickness)
-                if rate:
-                    return rate.cost_per_bend
-            except Exception:
-                pass
+        """
+        Pobierz cene giecia [PLN/giecie].
+
+        Zrodlo: PricingDataCache (TODO: tabela bending_rates)
+        Fallback: DEFAULT_RATES
+        """
+        cache = self._get_pricing_cache()
+
+        if cache.is_loaded:
+            rate = cache.get_bending_rate(thickness)
+            if rate is not None:
+                return rate
 
         return DEFAULT_RATES['bending_pln_per_bend']
 
     def _should_include_foil(self, material: str, thickness: float) -> bool:
-        """Sprawdź czy włączyć usuwanie folii (INOX ≤5mm)"""
+        """Sprawdz czy wlaczyc usuwanie folii (INOX <=5mm)"""
         mat_type = self._get_material_type(material)
         return mat_type == 'stainless' and thickness <= 5.0
 
-    def _get_foil_rate(self) -> float:
+    def _get_foil_rate(self, material: str = None, thickness: float = None) -> float:
         """
-        Pobierz stawkę usuwania folii [PLN/m].
+        Pobierz stawke usuwania folii [PLN/m].
 
-        Najpierw próbuje z Supabase (cost_config.foil_cost_per_meter),
-        fallback do DEFAULT_RATES.
+        POPRAWKA: Uzywa PricingDataCache zamiast starego hardcoded 5.0 PLN!
+
+        Zrodlo: PricingDataCache -> Supabase current_foil_rates.price_per_meter
+        Fallback: DEFAULT_RATES['foil_pln_per_m'] = 0.20 PLN/m
+
+        Args:
+            material: Nazwa materialu (opcjonalnie)
+            thickness: Grubosc [mm] (opcjonalnie)
+
+        Returns:
+            Stawka PLN/m (domyslnie ~0.15-0.20, NIE 5.0!)
         """
-        # Sprawdź cache
-        if hasattr(self, '_foil_rate_cache') and self._foil_rate_cache is not None:
-            return self._foil_rate_cache
+        cache = self._get_pricing_cache()
 
-        # Próbuj pobrać z Supabase
-        try:
-            from core.supabase_client import get_supabase_client
-            client = get_supabase_client()
-            response = client.table('cost_config').select('config_value').eq(
-                'config_key', 'foil_cost_per_meter'
-            ).limit(1).execute()
-
-            if response.data:
-                rate = float(response.data[0]['config_value'])
-                self._foil_rate_cache = rate
-                logger.debug(f"[CostEngine] Foil rate from Supabase: {rate} PLN/m")
+        # Probuj z PricingDataCache
+        if cache.is_loaded:
+            mat = material or 'stainless'
+            th = thickness or 5.0
+            rate = cache.get_foil_rate(mat, th)
+            if rate is not None:
                 return rate
-        except Exception as e:
-            logger.warning(f"[CostEngine] Could not fetch foil rate from Supabase: {e}")
 
-        # Fallback do DEFAULT_RATES
-        self._foil_rate_cache = DEFAULT_RATES['foil_pln_per_m']
-        return self._foil_rate_cache
+        # Fallback do DEFAULT_RATES (0.20 PLN/m)
+        return DEFAULT_RATES['foil_pln_per_m']
 
     # ============================================================
     # PART COST CALCULATION
@@ -419,7 +437,7 @@ class CostEngine:
             engraving_len_mm = float(part_data.get('engraving_len', 0) or 0)
             total_len_m = (cutting_len_mm + engraving_len_mm) / 1000.0
 
-            foil_rate = self._get_foil_rate()  # PLN/m z Supabase lub DEFAULT
+            foil_rate = self._get_foil_rate(material, thickness)  # PLN/m z PricingDataCache
             result.foil_cost = Decimal(str(total_len_m * foil_rate)).quantize(
                 Decimal('0.01'), rounding=ROUND_HALF_UP
             )
@@ -444,28 +462,50 @@ class CostEngine:
 
         return result
 
-    def _get_part_weight(self, part_data: Dict) -> float:
-        """Oblicz wagę części [kg]"""
-        # Jeśli waga podana bezpośrednio
-        weight = float(part_data.get('weight', 0) or 0)
-        if weight > 0:
-            return weight
+    # Współczynnik naddatku na wykorzystanie arkusza (35% = 1.35)
+    SHEET_UTILIZATION_FACTOR = 1.35
 
-        # Oblicz z wymiarów (bounding box)
-        width_mm = float(part_data.get('width', 0) or 0)
-        height_mm = float(part_data.get('height', 0) or 0)
+    def _get_part_weight(self, part_data: Dict) -> float:
+        """
+        Oblicz wagę części [kg] z powierzchni brutto DXF.
+
+        Powierzchnia brutto = największa zamknięta LWPOLYLINE (kontur zewnętrzny).
+        Dodaje współczynnik 35% naddatku na teoretyczne wykorzystanie arkusza.
+
+        Wzór: Waga [kg] = Area [mm²] × 1.35 × Thickness [mm] × Density [kg/m³] / 10^9
+        """
         thickness_mm = float(part_data.get('thickness', 0) or 0)
         material = str(part_data.get('material', '')).upper()
 
-        if width_mm <= 0 or height_mm <= 0 or thickness_mm <= 0:
+        if thickness_mm <= 0:
             return 0.0
 
-        # 100% powierzchni bounding box
-        area_m2 = (width_mm * height_mm) / 1_000_000
-        volume_m3 = area_m2 * (thickness_mm / 1000.0)
-        density = self._get_density(material)
+        # Preferuj area_gross_mm2 (powierzchnia brutto z DXF - kontur zewnętrzny)
+        area_gross_mm2 = float(part_data.get('area_gross_mm2', 0) or 0)
 
-        return volume_m3 * density
+        if area_gross_mm2 <= 0:
+            # Fallback: użyj istniejącej wagi jeśli dostępna
+            existing_weight = float(part_data.get('weight_kg', part_data.get('weight', 0)) or 0)
+            if existing_weight > 0:
+                # Istniejąca waga bez naddatku - dodaj naddatek
+                return existing_weight * self.SHEET_UTILIZATION_FACTOR
+
+            # Ostateczny fallback: bounding box (width × height)
+            width_mm = float(part_data.get('width', 0) or 0)
+            height_mm = float(part_data.get('height', 0) or 0)
+            if width_mm > 0 and height_mm > 0:
+                area_gross_mm2 = width_mm * height_mm
+            else:
+                return 0.0
+
+        # Dodaj naddatek 35% na wykorzystanie arkusza
+        area_with_factor = area_gross_mm2 * self.SHEET_UTILIZATION_FACTOR
+
+        # Oblicz wagę z powierzchni brutto + naddatek
+        density = self._get_density(material)
+        weight_kg = (area_with_factor * thickness_mm * density) / 1_000_000_000.0
+
+        return weight_kg
 
     # ============================================================
     # ALLOCATION MODELS

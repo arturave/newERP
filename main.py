@@ -19,6 +19,22 @@ import customtkinter as ctk
 
 from config.settings import CTK_APPEARANCE_MODE, CTK_COLOR_THEME, validate_config
 
+# Inicjalizacja cache'a cenowego
+def init_pricing_cache():
+    """
+    Uruchom asynchroniczne ładowanie danych cenowych z Supabase.
+
+    Wykonywane w tle - nie blokuje uruchomienia aplikacji.
+    """
+    try:
+        from core.pricing_cache import get_pricing_cache
+        cache = get_pricing_cache()
+        cache.load_async()
+        logger.info("✓ Ładowanie danych cenowych w tle...")
+    except Exception as e:
+        logger.warning(f"Nie udało się uruchomić ładowania cenników: {e}")
+
+
 # Konfiguracja logowania
 logging.basicConfig(
     level=logging.INFO,
@@ -134,7 +150,10 @@ def main():
         print(f"❌ Błąd konfiguracji: {e}")
         print("\nSprawdź plik config/settings.py lub utwórz plik .env")
         return 1
-    
+
+    # Ładowanie danych cenowych w tle (asynchronicznie)
+    init_pricing_cache()
+
     # Uruchom odpowiedni moduł
     if args.test:
         return run_tests()

@@ -810,7 +810,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
             "=" * 65,
             "RAPORT KALKULACJI KOSZTÓW",
             f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"Model alokacji: {allocation_model}",
+            "",
+            "METODA OBLICZANIA KOSZTU MATERIAŁU:",
+            "  Waga = Powierzchnia brutto DXF × Grubość × Gęstość × 1.35",
+            f"  Naddatek na wykorzystanie arkusza: +{(self.SHEET_UTILIZATION_FACTOR-1)*100:.0f}%",
+            "",
+            f"Model alokacji kosztów arkusza: {allocation_model}",
             "=" * 65,
             ""
         ]
@@ -822,16 +827,23 @@ class DetailedPartsPanel(ctk.CTkFrame):
             thickness = part.get('thickness', 0)
             qty = part.get('quantity', 1)
 
+            # Pobierz dane o powierzchni i wadze
+            area_gross = part.get('_area_gross_mm2', part.get('area_gross_mm2', 0))
+            area_with_factor = part.get('_area_with_factor_mm2', area_gross * self.SHEET_UTILIZATION_FACTOR if area_gross else 0)
+            weight_kg = part.get('weight', part.get('weight_kg', 0))
+
             lines.extend([
                 f"[{nr}] {name}",
                 f"    Materiał: {material} {thickness}mm × {qty}szt",
-                f"    Waga: {part.get('weight_kg', 0):.3f} kg",
+                f"    Powierzchnia brutto: {area_gross:.0f} mm² (× {self.SHEET_UTILIZATION_FACTOR:.0%} = {area_with_factor:.0f} mm²)",
+                f"    Waga (z naddatkiem 35%): {weight_kg:.3f} kg",
                 "",
                 "    SKŁADNIKI KOSZTOWE:",
                 f"      Materiał:   {part.get('material_cost', 0):>10.2f} PLN  {part.get('_material_formula', '')}",
                 f"      Cięcie:     {part.get('cutting_cost', 0):>10.2f} PLN  ({part.get('cutting_len', 0)/1000:.3f}m × PLN/m)",
                 f"      Grawer:     {part.get('engraving_cost', 0):>10.2f} PLN  ({part.get('engraving_len', 0)/1000:.3f}m)",
                 f"      Folia:      {part.get('foil_cost', 0):>10.2f} PLN  {part.get('_foil_formula', '')}",
+                f"      Piercing:   {part.get('piercing_cost', 0):>10.2f} PLN  {part.get('_piercing_formula', '')}",
                 f"      ─────────────────────────────────",
                 f"      L+M:        {part.get('lm_cost', 0):>10.2f} PLN",
                 "",
@@ -848,6 +860,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         total_cutting = sum(float(p.get('cutting_cost', 0) or 0) for p in self.parts_data)
         total_engraving = sum(float(p.get('engraving_cost', 0) or 0) for p in self.parts_data)
         total_foil = sum(float(p.get('foil_cost', 0) or 0) for p in self.parts_data)
+        total_piercing = sum(float(p.get('piercing_cost', 0) or 0) for p in self.parts_data)
         total_lm = sum(float(p.get('lm_cost', 0) or 0) for p in self.parts_data)
         total_bending = sum(float(p.get('bending_cost', 0) or 0) for p in self.parts_data)
         total_all = sum(float(p.get('total_unit', 0) or 0) * int(p.get('quantity', 1) or 1) for p in self.parts_data)
@@ -864,6 +877,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
             f"  Cięcie:           {total_cutting:>12.2f} PLN  ({total_cutting_m:.2f} m)",
             f"  Grawer:           {total_engraving:>12.2f} PLN  ({total_engraving_m:.2f} m)",
             f"  Folia:            {total_foil:>12.2f} PLN",
+            f"  Piercing:         {total_piercing:>12.2f} PLN",
             f"  L+M razem:        {total_lm:>12.2f} PLN",
             f"  Gięcie:           {total_bending:>12.2f} PLN",
             "",
@@ -872,8 +886,9 @@ class DetailedPartsPanel(ctk.CTkFrame):
             "=" * 65,
             "",
             "UWAGI:",
-            f"  - Model alokacji ({allocation_model}) wpływa tylko na koszt materiału",
-            "  - Koszty cięcia, graweru, folii są STAŁE (zależą od geometrii)",
+            "  - Powierzchnia brutto = największa zamknięta LWPOLYLINE z DXF",
+            "  - Koszty cięcia, graweru, folii, piercingu są STAŁE (zależą od geometrii detalu)",
+            f"  - Model alokacji ({allocation_model}) wpływa na podział kosztu arkusza",
         ])
 
         return "\n".join(lines)
@@ -1071,6 +1086,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
         if get_cost_logger is not None:
             for part in self.parts_data:
                 log_part_cost(part)
+            # Zapisz log do pliku
+            try:
+                log_filepath = save_cost_log()
+                logger.info(f"[DetailedParts] Zapisano log kosztów do: {log_filepath}")
+            except Exception as e:
+                logger.error(f"[DetailedParts] Błąd zapisu logu kosztów: {e}")
 
         self._update_summary()
 
@@ -1085,6 +1106,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         - cutting_cost: koszt cięcia (STAŁY)
         - engraving_cost: koszt graweru (STAŁY)
         - foil_cost: koszt folii (STAŁY)
+        - piercing_cost: koszt przebicia (STAŁY)
         - base_material_cost: bazowy koszt materiału (przed alokacją)
         """
         part = self.parts_data[idx]
@@ -1098,12 +1120,14 @@ class DetailedPartsPanel(ctk.CTkFrame):
             part['cutting_cost'] = costs['cutting_cost']
             part['engraving_cost'] = costs['engraving_cost']
             part['foil_cost'] = costs['foil_cost']
+            part['piercing_cost'] = costs.get('piercing_cost', 0)
             part['base_material_cost'] = costs['material_cost']  # Dla alokacji
 
             # Zapisz formuły dla loggera
             part['_material_formula'] = costs.get('material_formula', '')
             part['_cutting_formula'] = costs.get('cutting_formula', '')
             part['_foil_formula'] = costs.get('foil_formula', '')
+            part['_piercing_formula'] = costs.get('piercing_formula', '')
 
             # Jeśli nie kalkulujemy z materiałem - wyzeruj koszt materiału
             if not part.get('calc_with_material', True):
@@ -1112,7 +1136,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
             # L+M jako suma składników
             lm_cost = (part['material_cost'] + part['cutting_cost'] +
-                      part['engraving_cost'] + part['foil_cost'])
+                      part['engraving_cost'] + part['foil_cost'] + part['piercing_cost'])
             part['lm_cost'] = lm_cost
             part['base_lm_cost'] = lm_cost
         else:
@@ -1125,6 +1149,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 part['cutting_cost'] = 0.0
                 part['engraving_cost'] = 0.0
                 part['foil_cost'] = 0.0
+                part['piercing_cost'] = 0.0
                 part['base_material_cost'] = lm_cost
 
         # Przelicz koszt gięć - tylko jeśli nie było ręcznie ustawione
@@ -1172,11 +1197,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
             if not part.get('_manual_lm_cost', False):
                 # Zmień TYLKO koszt materiału - reszta pozostaje stała
                 part['material_cost'] = equal_material
-                # Przelicz L+M jako sumę składników (cięcie, grawer, folia pozostają bez zmian)
+                # Przelicz L+M jako sumę składników (cięcie, grawer, folia, piercing pozostają bez zmian)
                 part['lm_cost'] = (part['material_cost'] +
                                   float(part.get('cutting_cost', 0) or 0) +
                                   float(part.get('engraving_cost', 0) or 0) +
-                                  float(part.get('foil_cost', 0) or 0))
+                                  float(part.get('foil_cost', 0) or 0) +
+                                  float(part.get('piercing_cost', 0) or 0))
 
             lm_cost = float(part.get('lm_cost', 0) or 0)
             bending_cost = float(part.get('bending_cost', 0) or 0)
@@ -1187,7 +1213,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         """Na arkusz: koszt arkusza podzielony równo między detale.
 
         WAŻNE: Tylko material_cost jest modyfikowany.
-        Koszty cięcia, graweru i folii pozostają STAŁE (zależą od geometrii).
+        Koszty cięcia, graweru, folii i piercingu pozostają STAŁE (zależą od geometrii).
 
         Logika: Suma kosztów materiału (lub koszt arkusza z nestingu) dzielona
         równo między wszystkie detale.
@@ -1230,11 +1256,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
             if not part.get('_manual_lm_cost', False):
                 # Zmień TYLKO koszt materiału - reszta pozostaje stała
                 part['material_cost'] = equal_material
-                # Przelicz L+M jako sumę składników (cięcie, grawer, folia pozostają bez zmian)
+                # Przelicz L+M jako sumę składników (cięcie, grawer, folia, piercing pozostają bez zmian)
                 part['lm_cost'] = (part['material_cost'] +
                                   float(part.get('cutting_cost', 0) or 0) +
                                   float(part.get('engraving_cost', 0) or 0) +
-                                  float(part.get('foil_cost', 0) or 0))
+                                  float(part.get('foil_cost', 0) or 0) +
+                                  float(part.get('piercing_cost', 0) or 0))
 
             lm_cost = float(part.get('lm_cost', 0) or 0)
             bending_cost = float(part.get('bending_cost', 0) or 0)
@@ -1470,12 +1497,14 @@ class DetailedPartsPanel(ctk.CTkFrame):
                     'cutting_cost': costs['cutting_cost'],
                     'engraving_cost': costs['engraving_cost'],
                     'foil_cost': costs['foil_cost'],
+                    'piercing_cost': costs.get('piercing_cost', 0),
                     'lm_cost': costs['total_lm'],
                     'base_lm_cost': costs['total_lm'],
                     'base_material_cost': costs['material_cost'],
                     '_material_formula': costs.get('material_formula', ''),
                     '_cutting_formula': costs.get('cutting_formula', ''),
                     '_foil_formula': costs.get('foil_formula', ''),
+                    '_piercing_formula': costs.get('piercing_formula', ''),
                 })
 
                 if part_data['bends'] > 0:
@@ -1555,14 +1584,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
         pass
 
     # === MATERIAL PRICES, SPEEDS & DENSITIES ===
-    MATERIAL_PRICES = {  # PLN/kg
-        'S355': 4.5, 'S235': 4.2, 'DC01': 5.0, 'DC04': 5.2,
-        '1.4301': 18.0, '1.4404': 22.0, 'INOX': 18.0,
-        'AL': 12.0, 'ALU': 12.0, 'ALUMINIUM': 12.0,
-        'DEFAULT': 5.0
-    }
+    # DEPRECATED: Te stale to fallback - glowne zrodlo danych to PricingDataCache!
+    # Patrz: core/pricing_cache.py
 
-    CUTTING_SPEEDS = {  # m/min
+    CUTTING_SPEEDS = {  # m/min (referencyjne)
         'S355': 3.0, 'S235': 3.2, 'DC01': 3.5, 'DC04': 3.5,
         '1.4301': 2.5, '1.4404': 2.3, 'INOX': 2.5,
         'AL': 4.0, 'ALU': 4.0, 'ALUMINIUM': 4.0,
@@ -1576,69 +1601,115 @@ class DetailedPartsPanel(ctk.CTkFrame):
         'DEFAULT': 7850
     }
 
-    # Ceny cięcia [PLN/m] - domyślne wartości, nadpisywane z cenników
-    CUTTING_PRICES = {  # PLN/m dla różnych grubości
-        'S355': {1.0: 0.8, 2.0: 1.0, 3.0: 1.2, 4.0: 1.5, 5.0: 1.8, 6.0: 2.2, 8.0: 3.0, 10.0: 4.0},
-        '1.4301': {1.0: 1.5, 2.0: 2.0, 3.0: 2.8, 4.0: 3.5, 5.0: 4.5, 6.0: 5.5, 8.0: 7.0, 10.0: 9.0},
-        'DEFAULT': {1.0: 1.0, 2.0: 1.2, 3.0: 1.5, 4.0: 2.0, 5.0: 2.5, 6.0: 3.0, 8.0: 4.0, 10.0: 5.0}
-    }
-
-    # Ceny graweru [PLN/m]
+    # Ceny graweru [PLN/m] - fallback
     ENGRAVING_PRICE = 2.5  # PLN/m
 
-    # Ceny odparowania folii [PLN/m²]
-    FOIL_REMOVAL_PRICE = 5.0  # PLN/m² powierzchni
+    # POPRAWKA: Cena folii w PLN/m (NIE PLN/m2!)
+    # Poprzednia wartosc 5.0 byla BLEDNA - powinna byc ~0.15-0.20 PLN/m
+    FOIL_REMOVAL_PRICE = 0.20  # PLN/m - fallback, pobierane z PricingDataCache
 
-    def _calculate_weight_from_bounding_box(self, part_data: Dict) -> float:
-        """Oblicz wagę z prostokąta otaczającego (bounding box) - 100% powierzchni"""
-        width_mm = float(part_data.get('width', 0) or 0)
-        height_mm = float(part_data.get('height', 0) or 0)
+    # Współczynnik naddatku na wykorzystanie arkusza (35% = 1.35)
+    # Przy nestingu typowo wykorzystuje się ok. 65-75% arkusza,
+    # więc dodajemy 35% naddatku do powierzchni brutto detalu
+    SHEET_UTILIZATION_FACTOR = 1.35
+
+    def _calculate_weight_from_gross_area(self, part_data: Dict) -> float:
+        """
+        Oblicz wagę z powierzchni brutto detalu (kontur zewnętrzny DXF).
+
+        Powierzchnia brutto = największa zamknięta LWPOLYLINE w pliku DXF.
+        Jest to rzeczywista powierzchnia detalu BEZ uwzględniania otworów.
+
+        Dodaje współczynnik 35% naddatku na teoretyczne wykorzystanie arkusza
+        (typowa efektywność nestingu = 65-75%).
+
+        Wzór: Waga [kg] = Area [mm²] × 1.35 × Thickness [mm] × Density [kg/m³] / 10^9
+        """
         thickness_mm = float(part_data.get('thickness', 0) or 0)
         material = part_data.get('material', '').upper()
 
-        if width_mm <= 0 or height_mm <= 0 or thickness_mm <= 0:
+        if thickness_mm <= 0:
             return 0.0
 
-        # 100% powierzchni bounding box (prostokąt otaczający)
-        area_m2 = (width_mm * height_mm) / 1e6
-        volume_m3 = area_m2 * (thickness_mm / 1000.0)
-        density = self.MATERIAL_DENSITIES.get(material, self.MATERIAL_DENSITIES['DEFAULT'])
+        # Preferuj area_gross_mm2 (powierzchnia brutto z DXF)
+        area_gross_mm2 = float(part_data.get('area_gross_mm2', 0) or 0)
 
-        return volume_m3 * density
+        if area_gross_mm2 <= 0:
+            # Fallback: spróbuj z weight_kg jeśli już obliczone przy ładowaniu DXF
+            existing_weight = float(part_data.get('weight_kg', 0) or 0)
+            if existing_weight > 0:
+                # Istniejąca waga już bez naddatku - dodaj naddatek
+                return existing_weight * self.SHEET_UTILIZATION_FACTOR
+
+            # Ostateczny fallback: bounding box (width × height)
+            width_mm = float(part_data.get('width', 0) or 0)
+            height_mm = float(part_data.get('height', 0) or 0)
+            if width_mm > 0 and height_mm > 0:
+                area_gross_mm2 = width_mm * height_mm
+            else:
+                return 0.0
+
+        # Dodaj naddatek 35% na wykorzystanie arkusza
+        area_with_factor = area_gross_mm2 * self.SHEET_UTILIZATION_FACTOR
+
+        # Oblicz wagę: Area [mm²] × 1.35 × Thickness [mm] × Density [kg/m³] / 10^9
+        density = self.MATERIAL_DENSITIES.get(material, self.MATERIAL_DENSITIES['DEFAULT'])
+        weight_kg = (area_with_factor * thickness_mm * density) / 1_000_000_000.0
+
+        # Zapisz dane do logowania
+        part_data['_area_gross_mm2'] = area_gross_mm2
+        part_data['_area_with_factor_mm2'] = area_with_factor
+
+        return weight_kg
 
     def _get_cutting_price(self, material: str, thickness: float) -> float:
-        """Pobierz cenę cięcia z cennika [PLN/m]"""
+        """Pobierz cenę cięcia z cennika [PLN/m] - najpierw Supabase, potem fallback"""
         material = material.upper()
 
-        # Spróbuj pobrać z PricingTables
-        if self.pricing_tables:
-            try:
-                # Określ typ materiału
-                if material.startswith('1.4') or 'INOX' in material:
-                    material_type = 'stainless'
-                elif material in ['AL', 'ALU', 'ALUMINIUM'] or material.startswith('AL'):
-                    material_type = 'aluminum'
-                else:
-                    material_type = 'steel'
+        # 1. PRIORYTET: Pobierz z Supabase
+        try:
+            from pricing.repository import PricingRepository
+            from core.supabase_client import get_supabase_client
 
-                cutting_rate = self.pricing_tables.get_cutting_rate(material_type, thickness)
-                if cutting_rate:
-                    return cutting_rate.cost_per_meter
-            except Exception as e:
-                logger.debug(f"Could not get cutting price from pricing_tables: {e}")
+            repo = PricingRepository(get_supabase_client())
+            price_data = repo.get_cutting_price(material, thickness, gas='N')
+            if price_data and price_data.get('price_per_meter', 0) > 0:
+                price = price_data['price_per_meter']
+                logger.debug(f"[Pricing] Cutting {material}/{thickness}mm: {price:.4f} PLN/m (Supabase)")
+                return price
+        except Exception as e:
+            logger.debug(f"[Pricing] Supabase error for cutting price: {e}")
 
-        # Fallback do domyślnych cen
-        price_table = self.CUTTING_PRICES.get(material)
-        if not price_table:
-            if material.startswith('1.4') or 'INOX' in material:
-                price_table = self.CUTTING_PRICES.get('1.4301', self.CUTTING_PRICES['DEFAULT'])
-            else:
-                price_table = self.CUTTING_PRICES['DEFAULT']
+        # 2. FALLBACK: Pobierz z PricingDataCache (Supabase cached)
+        try:
+            from core.pricing_cache import get_pricing_cache
+            cache = get_pricing_cache()
+            if cache.is_loaded:
+                rate = cache.get_cutting_price(material, thickness, 'N')
+                if rate is not None:
+                    logger.debug(f"[Pricing] Cutting {material}/{thickness}mm: {rate:.4f} PLN/m (PricingCache)")
+                    return rate
+        except Exception as e:
+            logger.debug(f"[Pricing] PricingCache error: {e}")
+
+        # 3. OSTATNI FALLBACK: DEFAULT_RATES z cost_engine
+        from orders.cost_engine import DEFAULT_RATES
+
+        # Określ typ materiału
+        if material.startswith('1.4') or 'INOX' in material:
+            material_type = 'stainless'
+        elif material in ['AL', 'ALU', 'ALUMINIUM'] or material.startswith('AL'):
+            material_type = 'aluminum'
+        else:
+            material_type = 'steel'
+
+        price_table = DEFAULT_RATES['cutting_pln_per_m'].get(material_type, DEFAULT_RATES['cutting_pln_per_m']['steel'])
 
         # Znajdź najbliższą grubość
         thicknesses = sorted(price_table.keys())
         closest = min(thicknesses, key=lambda x: abs(x - thickness))
 
+        logger.debug(f"[Pricing] Cutting {material}/{thickness}mm: {price_table[closest]:.4f} PLN/m (DEFAULT_RATES)")
         return price_table[closest]
 
     def _calculate_lm_cost(self, part_data: Dict) -> Dict[str, float]:
@@ -1678,9 +1749,9 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 height=height_mm
             )
 
-        # === KOSZT MATERIAŁU z bounding box ===
-        # Oblicz wagę z bounding box
-        weight_kg = self._calculate_weight_from_bounding_box(part_data)
+        # === KOSZT MATERIAŁU z powierzchni brutto DXF ===
+        # Oblicz wagę z powierzchni brutto (kontur zewnętrzny bez otworów)
+        weight_kg = self._calculate_weight_from_gross_area(part_data)
         if weight_kg > 0:
             part_data['weight'] = round(weight_kg, 3)
 
@@ -1744,7 +1815,19 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 reason = "material nie jest INOX" if not is_inox else f"grubosc {thickness}mm > 5mm"
                 cost_logger.log_foil(applicable=False, reason=reason)
 
-        total_lm = material_cost + cutting_cost + engraving_cost + foil_cost
+        # === KOSZT PRZEBICIA (PIERCING) ===
+        pierce_count = int(part_data.get('piercing_count', 1) or 1)
+        pierce_rate = self._get_pierce_rate(material, thickness)
+        piercing_cost = pierce_count * pierce_rate
+
+        if cost_logger:
+            cost_logger.log_piercing(
+                count=pierce_count,
+                price_per_pierce=pierce_rate,
+                cost=piercing_cost
+            )
+
+        total_lm = material_cost + cutting_cost + engraving_cost + foil_cost + piercing_cost
 
         # === END LOGGING ===
         if cost_logger:
@@ -1757,7 +1840,8 @@ class DetailedPartsPanel(ctk.CTkFrame):
             )
 
         logger.debug(f"[LM Cost] {part_data.get('name', '?')}: mat={material_cost:.2f}, "
-                    f"cut={cutting_cost:.2f}, engr={engraving_cost:.2f}, foil={foil_cost:.2f} = {total_lm:.2f}")
+                    f"cut={cutting_cost:.2f}, engr={engraving_cost:.2f}, foil={foil_cost:.2f}, "
+                    f"pierce={piercing_cost:.2f} = {total_lm:.2f}")
 
         # Formuła dla folii
         if foil_applicable:
@@ -1765,51 +1849,117 @@ class DetailedPartsPanel(ctk.CTkFrame):
         else:
             foil_formula = "nie dotyczy" if not is_inox else f"grubość {thickness}mm > 5mm"
 
+        # Pobierz powierzchnię do formuły
+        area_gross = part_data.get('_area_gross_mm2', part_data.get('area_gross_mm2', 0))
+
         # Zwróć słownik ze wszystkimi składnikami - model alokacji operuje TYLKO na material_cost
         return {
             'material_cost': material_cost,
             'cutting_cost': cutting_cost,
             'engraving_cost': engraving_cost,
             'foil_cost': foil_cost,
+            'piercing_cost': piercing_cost,
             'total_lm': total_lm,
             # Formuły dla logowania
-            'material_formula': f"{weight_kg:.3f}kg × {mat_price:.2f}PLN/kg",
+            'material_formula': f"{weight_kg:.3f}kg × {mat_price:.2f}PLN/kg (pow.brutto {area_gross:.0f}mm² + 35%)",
             'cutting_formula': f"{cutting_len_m:.3f}m × {cutting_price_per_m:.2f}PLN/m",
-            'foil_formula': foil_formula
+            'foil_formula': foil_formula,
+            'piercing_formula': f"{pierce_count} × {pierce_rate:.2f}PLN"
         }
 
     def _get_material_price(self, material: str, thickness: float) -> float:
-        """Pobierz cenę materiału z cennika [PLN/kg]"""
+        """Pobierz cenę materiału z cennika [PLN/kg] - najpierw Supabase, potem fallback"""
         material = material.upper()
 
-        # Spróbuj pobrać z PricingTables
-        if self.pricing_tables:
-            try:
-                mat_price = self.pricing_tables.get_material_price(material, thickness)
-                if mat_price:
-                    return mat_price.price_per_kg
-            except Exception as e:
-                logger.debug(f"Could not get price from pricing_tables: {e}")
+        # 1. PRIORYTET: Pobierz z Supabase
+        try:
+            from pricing.repository import PricingRepository
+            from core.supabase_client import get_supabase_client
 
-        # Fallback do domyślnych cen
-        return self.MATERIAL_PRICES.get(material, self.MATERIAL_PRICES['DEFAULT'])
+            repo = PricingRepository(get_supabase_client())
+            price_data = repo.get_material_price(material, thickness)
+            if price_data and price_data.get('price_per_kg', 0) > 0:
+                price = price_data['price_per_kg']
+                logger.debug(f"[Pricing] Material {material}/{thickness}mm: {price:.2f} PLN/kg (Supabase)")
+                return price
+        except Exception as e:
+            logger.debug(f"[Pricing] Supabase error for material price: {e}")
+
+        # 2. FALLBACK: Pobierz z PricingDataCache (Supabase cached)
+        try:
+            from core.pricing_cache import get_pricing_cache
+            cache = get_pricing_cache()
+            if cache.is_loaded:
+                price = cache.get_material_price(material, thickness)
+                if price is not None:
+                    logger.debug(f"[Pricing] Material {material}/{thickness}mm: {price:.2f} PLN/kg (PricingCache)")
+                    return price
+        except Exception as e:
+            logger.debug(f"[Pricing] PricingCache error: {e}")
+
+        # 3. OSTATNI FALLBACK: Domyślne ceny wg typu materiału
+        # Określ typ materiału
+        if material.startswith('1.4') or 'INOX' in material:
+            price = 18.0  # stainless
+        elif material in ['AL', 'ALU', 'ALUMINIUM'] or material.startswith('AL'):
+            price = 12.0  # aluminum
+        else:
+            price = 5.0  # steel
+
+        logger.debug(f"[Pricing] Material {material}/{thickness}mm: {price:.2f} PLN/kg (DEFAULT)")
+        return price
 
     def _get_engraving_price(self) -> float:
-        """Pobierz cenę graweru [PLN/m]"""
-        if self.pricing_tables and hasattr(self.pricing_tables, 'engraving_price_per_m'):
-            return self.pricing_tables.engraving_price_per_m
-        return self.ENGRAVING_PRICE
+        """
+        Pobierz cenę graweru [PLN/m].
+
+        UWAGA: Grawer nie jest w PricingDataCache - używamy DEFAULT_RATES.
+        """
+        from orders.cost_engine import DEFAULT_RATES
+        return DEFAULT_RATES.get('engraving_pln_per_m', self.ENGRAVING_PRICE)
 
     def _get_foil_removal_price(self, material: str, thickness: float) -> float:
-        """Pobierz cenę usuwania folii [PLN/m²]"""
-        if self.pricing_tables:
-            try:
-                foil_rate = self.pricing_tables.get_foil_removal_rate(material, thickness)
-                if foil_rate:
-                    return foil_rate.get('price_per_m2', self.FOIL_REMOVAL_PRICE)
-            except Exception:
-                pass
-        return self.FOIL_REMOVAL_PRICE
+        """
+        Pobierz cene usuwania folii [PLN/m].
+
+        POPRAWKA: Zwraca PLN/m (nie PLN/m2!) z PricingDataCache.
+        Poprzedni kod zwracal bledna wartosc 5.0 PLN.
+
+        Args:
+            material: Nazwa materialu
+            thickness: Grubosc [mm]
+
+        Returns:
+            Cena PLN/m (ok. 0.15-0.20)
+        """
+        try:
+            from core.pricing_cache import get_pricing_cache
+            cache = get_pricing_cache()
+            if cache.is_loaded:
+                rate = cache.get_foil_rate(material, thickness)
+                if rate is not None:
+                    return rate
+        except Exception:
+            pass
+        return self.FOIL_REMOVAL_PRICE  # 0.20 PLN/m fallback
+
+    def _get_pierce_rate(self, material: str, thickness: float) -> float:
+        """
+        Pobierz koszt pojedynczego przebicia [PLN/szt].
+
+        Zrodlo: PricingDataCache -> Supabase piercing_rates
+        """
+        try:
+            from core.pricing_cache import get_pricing_cache
+            cache = get_pricing_cache()
+            if cache.is_loaded:
+                rate = cache.get_piercing_rate(material, thickness)
+                if rate is not None:
+                    return rate
+        except Exception:
+            pass
+        # Domyslna stawka: 0.40 PLN za przebicie
+        return 0.40
 
     # === PUBLIC API ===
 
@@ -1837,6 +1987,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 'bending_cost': float(part.get('bending_cost', part.get('bending', 0)) or 0),
                 'additional': float(part.get('additional', 0) or 0),
                 'weight': weight,
+                'weight_kg': weight,  # Alias dla kompatybilności
                 'cutting_len': cutting_len,
                 'engraving_len': engraving_len,  # Dlugosc graweru
                 'piercing_count': int(part.get('piercing_count', 1) or 1),
@@ -1847,6 +1998,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 'filepath': part.get('filepath', ''),
                 'width': part.get('width', 0),
                 'height': part.get('height', 0),
+                # Powierzchnie z DXF - kluczowe dla obliczenia wagi!
+                'area_gross_mm2': float(part.get('area_gross_mm2', 0) or 0),
+                'area_net_mm2': float(part.get('area_net_mm2', 0) or 0),
+                'area_bbox_mm2': float(part.get('area_bbox_mm2', 0) or 0),
                 'source': part.get('source', 'dxf')
             }
 
@@ -1861,6 +2016,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 part_data['cutting_cost'] = costs['cutting_cost']
                 part_data['engraving_cost'] = costs['engraving_cost']
                 part_data['foil_cost'] = costs['foil_cost']
+                part_data['piercing_cost'] = costs.get('piercing_cost', 0)
                 part_data['base_material_cost'] = costs['material_cost']
                 part_data['lm_cost'] = costs['total_lm']
                 part_data['base_lm_cost'] = costs['total_lm']
@@ -1868,6 +2024,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 part_data['_material_formula'] = costs.get('material_formula', '')
                 part_data['_cutting_formula'] = costs.get('cutting_formula', '')
                 part_data['_foil_formula'] = costs.get('foil_formula', '')
+                part_data['_piercing_formula'] = costs.get('piercing_formula', '')
 
             # Oblicz bending cost jesli sa giecia
             if part_data['bends'] > 0 and part_data['bending_cost'] == 0:

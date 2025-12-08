@@ -29,6 +29,7 @@ class Theme:
     ACCENT_SUCCESS = "#22c55e"
     ACCENT_WARNING = "#f59e0b"
     ACCENT_DANGER = "#ef4444"
+    ACCENT_INFO = "#06b6d4"
 
 
 def load_layer_settings() -> Dict:
@@ -463,6 +464,27 @@ class CostSettingsDialog(ctk.CTkToplevel):
         self._add_field(main, "default_markup_percent", "Domyślny narzut [%]:",
                        self.settings["default_markup_percent"])
 
+        # Grupa: Zarządzanie cennikami
+        self._add_section(main, "📊 Zarządzanie cennikami")
+        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=5, padx=10)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="📊 Cenniki (Supabase)",
+            command=self._open_pricing_manager,
+            width=200,
+            fg_color=Theme.ACCENT_INFO,
+            hover_color="#0891b2"
+        ).pack(side="left", padx=5)
+
+        ctk.CTkLabel(
+            btn_frame,
+            text="Edycja cen materiałów i cięcia",
+            text_color=Theme.TEXT_SECONDARY,
+            font=ctk.CTkFont(size=10)
+        ).pack(side="left", padx=10)
+
         # Footer
         footer = ctk.CTkFrame(self, fg_color=Theme.BG_CARD, height=60)
         footer.pack(fill="x", padx=10, pady=10)
@@ -522,6 +544,19 @@ class CostSettingsDialog(ctk.CTkToplevel):
         self.entries[f"{key}_enabled"] = var_enabled
         self.entries[f"{key}_value"] = entry
 
+    def _open_pricing_manager(self):
+        """Otwórz okno zarządzania cennikami Supabase"""
+        try:
+            from scripts.test_pricing_gui import PricingManagerWindow
+            window = PricingManagerWindow(self)
+            window.grab_set()
+        except ImportError as e:
+            logger.error(f"[CostSettings] Nie można załadować modułu cenników: {e}")
+            messagebox.showerror("Błąd", f"Nie można otworzyć okna cenników:\n{e}", parent=self)
+        except Exception as e:
+            logger.error(f"[CostSettings] Błąd otwierania cenników: {e}")
+            messagebox.showerror("Błąd", f"Błąd: {e}", parent=self)
+
     def _save(self):
         """Zapisz ustawienia"""
         new_settings = {}
@@ -543,6 +578,10 @@ class CostSettingsDialog(ctk.CTkToplevel):
         if self._save_cost_settings(new_settings):
             # Zaktualizuj też Supabase jeśli dostępne
             self._sync_to_supabase(new_settings)
+
+            # Przeładuj cache cenowy żeby pobrać nowe wartości z Supabase
+            self._reload_pricing_cache()
+
             messagebox.showinfo("Sukces", "Ustawienia kosztów zapisane!", parent=self)
             if self.on_save:
                 self.on_save(new_settings)
@@ -569,6 +608,16 @@ class CostSettingsDialog(ctk.CTkToplevel):
             logger.warning("[CostSettings] Supabase client not available")
         except Exception as e:
             logger.warning(f"[CostSettings] Failed to sync to Supabase: {e}")
+
+    def _reload_pricing_cache(self):
+        """Przeładuj cache cenowy po zapisaniu zmian w ustawieniach"""
+        try:
+            from core.pricing_cache import get_pricing_cache
+            cache = get_pricing_cache()
+            cache.reload()
+            logger.info("[CostSettings] Pricing cache reloaded")
+        except Exception as e:
+            logger.warning(f"[CostSettings] Failed to reload pricing cache: {e}")
 
 
 # Test
