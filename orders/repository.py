@@ -43,7 +43,7 @@ class OrderRepository:
 
         # Wszystkie kolumny po migracji (znane z migrate_orders.sql + title z oryginalnej tabeli)
         self._available_columns = {
-            'id', 'title', 'name', 'client', 'customer_name', 'date_in', 'date_due',
+            'id', 'title', 'name', 'client', 'customer_name', 'customer_id', 'date_in', 'date_due',
             'status', 'priority', 'notes', 'parts_count', 'total_cost',
             'metadata', 'created_at', 'updated_at'
         }
@@ -82,10 +82,14 @@ class OrderRepository:
         record['status'] = status
         record['updated_at'] = datetime.now().isoformat()
 
+        # customer_id - UUID relacja do tabeli customers
+        customer_id = order_data.get('customer_id')
+
         # Pola opcjonalne - dodaj tylko jeśli kolumna istnieje
         optional_fields = {
             'client': client_value,
             'customer_name': client_value,  # alternatywna nazwa
+            'customer_id': customer_id,  # UUID dla relacji FK do customers
             'date_in': order_data.get('date_in') or datetime.now().date().isoformat(),
             'date_due': order_data.get('date_due'),
             'priority': order_data.get('priority', 'Normalny'),
@@ -96,7 +100,8 @@ class OrderRepository:
                 'cost_params': order_data.get('cost_params', {}),
                 'cost_result': order_data.get('cost_result', {}),
                 'nesting_results': self._serialize_nesting_results(order_data.get('nesting_results', {})),
-                'client': client_value  # Zapisz klienta w metadata jako fallback
+                'client': client_value,  # Zapisz klienta w metadata jako fallback
+                'customer_id': customer_id  # Zapisz też customer_id w metadata
             })
         }
 
@@ -202,22 +207,29 @@ class OrderRepository:
                         else:
                             metadata = order['metadata']
                         order['cost_params'] = metadata.get('cost_params', {})
-                        order['nesting_results'] = metadata.get('nesting_results', {})
                         order['cost_result'] = metadata.get('cost_result', {})
                         # Odzyskaj klienta z metadata jeśli brak w głównych polach
                         if not order.get('client') and metadata.get('client'):
                             order['client'] = metadata['client']
+                        # Odzyskaj customer_id z metadata jeśli brak w głównych polach
+                        if not order.get('customer_id') and metadata.get('customer_id'):
+                            order['customer_id'] = metadata['customer_id']
                     except Exception as e:
                         logger.warning(f"[OrderRepository] Error parsing metadata: {e}")
 
                 # Pobierz pozycje
                 order['items'] = self._get_order_items(order_id)
 
-                # Pobierz pełne dane nestingu z nesting_results (jeśli istnieją)
-                nesting_data = self.get_nesting_result(order_id)
-                if nesting_data:
-                    order['nesting_full_data'] = nesting_data
-                    logger.info(f"[OrderRepository] Loaded full nesting data for order {order_id}")
+                # Pobierz dane nestingu z NestingRepository (nowa tabela)
+                try:
+                    from orders.nesting_repository import get_nesting_repository
+                    nesting_repo = get_nesting_repository()
+                    nesting_data = nesting_repo.load(order_id)
+                    if nesting_data:
+                        order['nesting_results'] = nesting_data
+                        logger.info(f"[OrderRepository] Loaded nesting from NestingRepository for order {order_id}")
+                except Exception as e:
+                    logger.warning(f"[OrderRepository] Could not load nesting: {e}")
 
                 logger.debug(f"[OrderRepository] Found order: {order_id}")
                 return order
@@ -617,6 +629,7 @@ class OrderRepository:
     def get_nesting_result(self, order_id: str) -> Optional[Dict]:
         """
         Pobierz pełne dane nestingu dla zamówienia.
+        DELEGUJE do NestingRepository.
 
         Args:
             order_id: ID zamówienia
@@ -625,49 +638,20 @@ class OrderRepository:
             Pełne dane nestingu lub None
         """
         try:
-            response = self.client.table('nesting_results').select('*').eq(
-                'context_id', order_id
-            ).eq('context_type', 'order').order('created_at', desc=True).limit(1).execute()
-
-            if response.data:
-                result = response.data[0]
-
-                # Deserializuj nesting_data
-                if result.get('nesting_data'):
-                    try:
-                        if isinstance(result['nesting_data'], str):
-                            result['nesting_data'] = json.loads(result['nesting_data'])
-                    except:
-                        pass
-
-                logger.debug(f"[OrderRepository] Loaded nesting result for order {order_id}")
-                return result
-
-            return None
-
+            from orders.nesting_repository import get_nesting_repository
+            return get_nesting_repository().load(order_id)
         except Exception as e:
             logger.error(f"[OrderRepository] Error getting nesting result: {e}")
             return None
 
     def get_all_nesting_results(self, order_id: str) -> List[Dict]:
-        """Pobierz wszystkie wyniki nestingu dla zamówienia (historia)"""
+        """
+        Pobierz wszystkie wyniki nestingu dla zamówienia (historia).
+        DELEGUJE do NestingRepository.
+        """
         try:
-            response = self.client.table('nesting_results').select('*').eq(
-                'context_id', order_id
-            ).eq('context_type', 'order').order('created_at', desc=True).execute()
-
-            results = response.data or []
-
-            for result in results:
-                if result.get('nesting_data'):
-                    try:
-                        if isinstance(result['nesting_data'], str):
-                            result['nesting_data'] = json.loads(result['nesting_data'])
-                    except:
-                        pass
-
-            return results
-
+            from orders.nesting_repository import get_nesting_repository
+            return get_nesting_repository().get_all_for_order(order_id)
         except Exception as e:
             logger.error(f"[OrderRepository] Error getting nesting results: {e}")
             return []

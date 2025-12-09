@@ -1350,6 +1350,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
             'name': f'Detal_{self.next_nr}',
             'material': 'S355',
             'thickness': 2.0,
+            'thickness_mm': 2.0,  # Alias dla NestingWindow
             'quantity': 1,
             'bends': 0,
             # Koszty inicjalizowane na 0 - obliczane przez _recalculate_all()
@@ -1403,11 +1404,13 @@ class DetailedPartsPanel(ctk.CTkFrame):
             model_data = Model3DLoader.load_model_data(filepath)
 
             if model_data:
+                thickness_val = model_data.get('thickness_mm', 0)
                 new_part = {
                     'nr': self.next_nr,
                     'name': Path(filepath).stem,
                     'material': 'S355',
-                    'thickness': model_data.get('thickness_mm', 0),
+                    'thickness': thickness_val,
+                    'thickness_mm': thickness_val,  # Alias dla NestingWindow
                     'quantity': 1,
                     'bends': model_data.get('bends_count', 0),
                     # Koszty inicjalizowane na 0 - obliczane przez _recalculate_all()
@@ -1485,11 +1488,13 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 if product.get('materials_dict'):
                     material_name = product['materials_dict'].get('name', material_name)
 
+                thickness_val = float(product.get('thickness_mm', 0) or 0)
                 part_data = {
                     'nr': self.next_nr,
                     'name': product.get('name', 'Bez nazwy'),
                     'material': material_name,
-                    'thickness': float(product.get('thickness_mm', 0) or 0),
+                    'thickness': thickness_val,
+                    'thickness_mm': thickness_val,  # Alias dla NestingWindow
                     'quantity': 1,
                     'weight_kg': float(product.get('weight_kg', 0) or 0),
                     'cutting_len': float(product.get('cutting_length_mm', 0) or 0),
@@ -1663,24 +1668,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
         return weight_kg
 
     def _get_cutting_price(self, material: str, thickness: float) -> float:
-        """Pobierz cenę cięcia z cennika [PLN/m] - najpierw Supabase, potem fallback"""
+        """Pobierz cenę cięcia z cennika [PLN/m] - z PricingDataCache (załadowany przy starcie)"""
         material = material.upper()
 
-        # 1. PRIORYTET: Pobierz z Supabase
-        try:
-            from pricing.repository import PricingRepository
-            from core.supabase_client import get_supabase_client
-
-            repo = PricingRepository(get_supabase_client())
-            price_data = repo.get_cutting_price(material, thickness, gas='N')
-            if price_data and price_data.get('price_per_meter', 0) > 0:
-                price = price_data['price_per_meter']
-                logger.debug(f"[Pricing] Cutting {material}/{thickness}mm: {price:.4f} PLN/m (Supabase)")
-                return price
-        except Exception as e:
-            logger.debug(f"[Pricing] Supabase error for cutting price: {e}")
-
-        # 2. FALLBACK: Pobierz z PricingDataCache (Supabase cached)
+        # 1. PRIORYTET: PricingDataCache (załadowany asynchronicznie przy starcie aplikacji)
         try:
             from core.pricing_cache import get_pricing_cache
             cache = get_pricing_cache()
@@ -1692,7 +1683,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         except Exception as e:
             logger.debug(f"[Pricing] PricingCache error: {e}")
 
-        # 3. OSTATNI FALLBACK: DEFAULT_RATES z cost_engine
+        # 2. FALLBACK: DEFAULT_RATES (gdy cache nie załadowany lub brak danych)
         from orders.cost_engine import DEFAULT_RATES
 
         # Określ typ materiału
@@ -1868,24 +1859,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
         }
 
     def _get_material_price(self, material: str, thickness: float) -> float:
-        """Pobierz cenę materiału z cennika [PLN/kg] - najpierw Supabase, potem fallback"""
+        """Pobierz cenę materiału z cennika [PLN/kg] - z PricingDataCache (załadowany przy starcie)"""
         material = material.upper()
 
-        # 1. PRIORYTET: Pobierz z Supabase
-        try:
-            from pricing.repository import PricingRepository
-            from core.supabase_client import get_supabase_client
-
-            repo = PricingRepository(get_supabase_client())
-            price_data = repo.get_material_price(material, thickness)
-            if price_data and price_data.get('price_per_kg', 0) > 0:
-                price = price_data['price_per_kg']
-                logger.debug(f"[Pricing] Material {material}/{thickness}mm: {price:.2f} PLN/kg (Supabase)")
-                return price
-        except Exception as e:
-            logger.debug(f"[Pricing] Supabase error for material price: {e}")
-
-        # 2. FALLBACK: Pobierz z PricingDataCache (Supabase cached)
+        # 1. PRIORYTET: PricingDataCache (załadowany asynchronicznie przy starcie aplikacji)
         try:
             from core.pricing_cache import get_pricing_cache
             cache = get_pricing_cache()
@@ -1897,8 +1874,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         except Exception as e:
             logger.debug(f"[Pricing] PricingCache error: {e}")
 
-        # 3. OSTATNI FALLBACK: Domyślne ceny wg typu materiału
-        # Określ typ materiału
+        # 2. FALLBACK: Domyślne ceny wg typu materiału (gdy cache nie załadowany)
         if material.startswith('1.4') or 'INOX' in material:
             price = 18.0  # stainless
         elif material in ['AL', 'ALU', 'ALUMINIUM'] or material.startswith('AL'):
@@ -1920,18 +1896,16 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
     def _get_foil_removal_price(self, material: str, thickness: float) -> float:
         """
-        Pobierz cene usuwania folii [PLN/m] z bazy danych current_foil_rates.
-
-        WAZNE: Cena ZAWSZE pobierana z Supabase, NIE hardcoded!
+        Pobierz cene usuwania folii [PLN/m] z PricingDataCache (załadowany przy starcie).
 
         Args:
             material: Nazwa materialu
             thickness: Grubosc [mm]
 
         Returns:
-            Cena PLN/m z tabeli current_foil_rates
+            Cena PLN/m z cache (załadowany z current_foil_rates przy starcie)
         """
-        # 1. Probuj z PricingDataCache (juz zaladowany z Supabase)
+        # 1. PRIORYTET: PricingDataCache (załadowany asynchronicznie przy starcie aplikacji)
         try:
             from core.pricing_cache import get_pricing_cache
             cache = get_pricing_cache()
@@ -1943,46 +1917,15 @@ class DetailedPartsPanel(ctk.CTkFrame):
         except Exception as e:
             logger.debug(f"[Pricing] PricingCache error: {e}")
 
-        # 2. Bezposrednie zapytanie do Supabase current_foil_rates
-        try:
-            from core.supabase_client import get_supabase_client
-            client = get_supabase_client()
+        # 2. FALLBACK: Domyślna stawka (gdy cache nie załadowany)
+        # Sprawdź czy folia w ogóle dotyczy tego materiału
+        mat_upper = material.upper()
+        is_stainless = '1.4' in mat_upper or 'INOX' in mat_upper
+        if not is_stainless or thickness > 5.0:
+            return 0.0  # Folia nie dotyczy tego materiału
 
-            # Okresl typ materialu
-            mat_upper = material.upper()
-            if '1.4' in mat_upper or 'INOX' in mat_upper:
-                material_type = 'stainless'
-            elif 'AL' in mat_upper:
-                material_type = 'aluminum'
-            else:
-                material_type = 'steel'
-
-            # Folia tylko dla stainless <= 5mm
-            if material_type != 'stainless' or thickness > 5.0:
-                return 0.0  # Folia nie dotyczy tego materialu
-
-            # Pobierz z current_foil_rates
-            response = client.table('current_foil_rates').select(
-                'price_per_meter, max_thickness'
-            ).eq(
-                'material_type', material_type
-            ).gte(
-                'max_thickness', thickness
-            ).order(
-                'max_thickness'
-            ).limit(1).execute()
-
-            if response.data and len(response.data) > 0:
-                price = float(response.data[0]['price_per_meter'])
-                logger.debug(f"[Pricing] Foil {material}/{thickness}mm: {price:.4f} PLN/m (Supabase direct)")
-                return price
-
-        except Exception as e:
-            logger.warning(f"[Pricing] Nie mozna pobrac ceny folii z Supabase: {e}")
-
-        # 3. OSTATNI FALLBACK - tylko gdy brak polaczenia z baza
-        logger.warning(f"[Pricing] Uzywam fallback dla folii - sprawdz polaczenie z baza!")
-        return self.FOIL_REMOVAL_PRICE  # 0.20 PLN/m - tylko gdy brak bazy
+        logger.debug(f"[Pricing] Foil {material}/{thickness}mm: {self.FOIL_REMOVAL_PRICE:.4f} PLN/m (DEFAULT)")
+        return self.FOIL_REMOVAL_PRICE  # 0.20 PLN/m
 
     def _get_pierce_rate(self, material: str, thickness: float) -> float:
         """
@@ -2022,11 +1965,13 @@ class DetailedPartsPanel(ctk.CTkFrame):
                                            part.get('engraving_len',
                                                     part.get('engraving_length', 0))) or 0)
 
+            thickness_val = float(part.get('thickness_mm', part.get('thickness', 0)) or 0)
             part_data = {
                 'nr': self.next_nr,
                 'name': part.get('name', ''),
                 'material': part.get('material', ''),
-                'thickness': float(part.get('thickness_mm', part.get('thickness', 0)) or 0),
+                'thickness': thickness_val,
+                'thickness_mm': thickness_val,  # Alias dla NestingWindow
                 'quantity': int(part.get('quantity', 1) or 1),
                 'bends': int(part.get('bends', part.get('bends_count', 0)) or 0),
                 'lm_cost': 0.0,  # Obliczane przez _recalculate_all()

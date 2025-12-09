@@ -294,10 +294,12 @@ class ThumbnailGenerator:
 class OrderInfoPanel(ctk.CTkFrame):
     """Panel z podstawowymi informacjami o zamówieniu"""
 
-    def __init__(self, parent, on_change: Callable = None, **kwargs):
+    def __init__(self, parent, on_change: Callable = None, on_nesting_preview: Callable = None, **kwargs):
         super().__init__(parent, fg_color=Theme.BG_CARD, corner_radius=8, **kwargs)
         self.on_change = on_change
+        self.on_nesting_preview = on_nesting_preview
         self.customers_list = []  # Lista klientów
+        self.selected_customer_id = None  # ID wybranego klienta (dla relacji FK)
         self._load_customers()
         self._setup_ui()
 
@@ -431,11 +433,62 @@ class OrderInfoPanel(ctk.CTkFrame):
         self.text_notes = ctk.CTkTextbox(notes_frame, height=50)
         self.text_notes.pack(side="left", fill="x", expand=True)
 
+        # Przycisk podglądu nestingu
+        nesting_frame = ctk.CTkFrame(self, fg_color="transparent")
+        nesting_frame.pack(fill="x", padx=10, pady=(8, 3))
+
+        self.btn_nesting_preview = ctk.CTkButton(
+            nesting_frame,
+            text="📊 Podgląd nestingu",
+            command=self._on_nesting_preview,
+            fg_color=Theme.ACCENT_INFO,
+            hover_color="#0599b8",
+            width=150,
+            height=32
+        )
+        self.btn_nesting_preview.pack(side="left")
+
+        self.lbl_nesting_status = ctk.CTkLabel(
+            nesting_frame,
+            text="Brak wyników nestingu",
+            font=ctk.CTkFont(size=10),
+            text_color=Theme.TEXT_MUTED
+        )
+        self.lbl_nesting_status.pack(side="left", padx=15)
+
+    def _on_nesting_preview(self):
+        """Otwórz podgląd nestingu"""
+        if self.on_nesting_preview:
+            self.on_nesting_preview()
+
+    def set_nesting_status(self, has_results: bool, summary: str = ""):
+        """Ustaw status nestingu"""
+        if has_results:
+            self.lbl_nesting_status.configure(
+                text=summary or "Wyniki dostępne",
+                text_color=Theme.ACCENT_SUCCESS
+            )
+        else:
+            self.lbl_nesting_status.configure(
+                text="Brak wyników nestingu",
+                text_color=Theme.TEXT_MUTED
+            )
+
     def _on_client_selected(self, selection):
-        """Obsługa wyboru klienta"""
+        """Obsługa wyboru klienta - zapisuje customer_id dla relacji FK"""
         logger.debug(f"[OrderInfoPanel] Client selected: {selection}")
         if selection == "+ Dodaj nowego...":
             self._add_new_customer()
+        elif selection == "-- Wybierz --":
+            self.selected_customer_id = None
+        else:
+            # Znajdź customer_id dla wybranej nazwy
+            self.selected_customer_id = None
+            for customer in self.customers_list:
+                if customer.get('name') == selection or customer.get('short_name') == selection:
+                    self.selected_customer_id = customer.get('id')
+                    logger.debug(f"[OrderInfoPanel] Found customer_id: {self.selected_customer_id}")
+                    break
 
     def _add_new_customer(self):
         """Dodaj nowego klienta"""
@@ -479,6 +532,10 @@ class OrderInfoPanel(ctk.CTkFrame):
             except Exception as e2:
                 logger.error(f"[OrderInfoPanel] Cannot save customer: {e2}")
 
+        # Zapisz customer_id nowo dodanego klienta
+        self.selected_customer_id = new_customer['id']
+        logger.debug(f"[OrderInfoPanel] New customer_id: {self.selected_customer_id}")
+
         # Odśwież listę
         self._refresh_customers()
         self.client_combo.set(name)
@@ -513,6 +570,7 @@ class OrderInfoPanel(ctk.CTkFrame):
             'name': self.entry_name.get().strip(),
             'client': client,
             'customer_name': client,  # alternatywna kolumna
+            'customer_id': self.selected_customer_id,  # UUID dla relacji FK
             'date_in': self.entry_date_in.get().strip(),
             'date_due': self.entry_date_due.get().strip(),
             'status': status,
@@ -526,6 +584,9 @@ class OrderInfoPanel(ctk.CTkFrame):
             self.entry_name.delete(0, 'end')
             self.entry_name.insert(0, data['name'])
 
+        # Ustaw customer_id z danych zamówienia
+        self.selected_customer_id = data.get('customer_id')
+
         # Ustaw klienta w combo
         client = data.get('client') or data.get('customer_name', '')
         if client:
@@ -533,9 +594,15 @@ class OrderInfoPanel(ctk.CTkFrame):
             current_values = self.client_combo.cget('values')
             if client in current_values:
                 self.client_combo.set(client)
+                # Znajdź customer_id jeśli nie było w danych
+                if not self.selected_customer_id:
+                    for customer in self.customers_list:
+                        if customer.get('name') == client or customer.get('short_name') == client:
+                            self.selected_customer_id = customer.get('id')
+                            break
             else:
                 # Dodaj klienta do listy i ustaw
-                self.customers_list.append({'name': client})
+                self.customers_list.append({'name': client, 'id': self.selected_customer_id})
                 self._refresh_customers()
                 self.client_combo.set(client)
 
@@ -1579,10 +1646,16 @@ class NestingResultsPanel(ctk.CTkFrame):
         if self.on_click_popup:
             self.on_click_popup()
         else:
-            # Fallback - otwórz bezpośrednio
+            # Użyj nowego NestingResultsViewer
             if self.nesting_results:
-                popup = NestingResultsPopup(self.winfo_toplevel(), self.nesting_results)
-                popup.focus_force()
+                try:
+                    from orders.gui.nesting_results_viewer import open_nesting_results_viewer
+                    order_id = self.nesting_results.get('order_id', 'unknown')
+                    open_nesting_results_viewer(self.winfo_toplevel(), order_id, self.nesting_results)
+                except ImportError:
+                    # Fallback do starego popup
+                    popup = NestingResultsPopup(self.winfo_toplevel(), self.nesting_results)
+                    popup.focus_force()
 
     def set_nesting_results(self, results: Dict):
         """Ustaw wyniki nestingu (do użycia przez popup)"""
@@ -1644,6 +1717,7 @@ class OrderWindow(ctk.CTkToplevel):
         self.order_id = order_id or str(uuid.uuid4())
         self.order_data = order_data or {}
         self.nesting_results = {}
+        self._pending_nesting_images = []  # Obrazy do zapisania po zapisie zamówienia
         self.cost_result = None
         self.cost_service = None
         self.on_save_callback = on_save_callback
@@ -1784,7 +1858,10 @@ class OrderWindow(ctk.CTkToplevel):
         middle_left.grid_rowconfigure(0, weight=1)
 
         # Panel informacji (lewa)
-        self.info_panel = OrderInfoPanel(middle_left)
+        self.info_panel = OrderInfoPanel(
+            middle_left,
+            on_nesting_preview=self._open_nesting_viewer
+        )
         self.info_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
         # Panel listy detali z miniaturkami (prawa)
@@ -2012,6 +2089,8 @@ class OrderWindow(ctk.CTkToplevel):
         """Callback - zakończenie nestingu"""
         logger.info(f"[OrderWindow] Nesting complete, received results")
 
+        # Dodaj order_id do wyników
+        results['order_id'] = self.order_id
         self.nesting_results = results
 
         # Aktualizuj panel wyników
@@ -2027,7 +2106,12 @@ class OrderWindow(ctk.CTkToplevel):
                 })
             self.results_panel.update_results(sheets_data)
 
-        # Zapisz obrazy arkuszy (jako base64 do JSON)
+        # Zachowaj oryginalne obrazy do późniejszego zapisu (po zapisaniu zamówienia)
+        if 'sheet_images' in results and results['sheet_images']:
+            self._pending_nesting_images = results['sheet_images'].copy()
+            logger.info(f"[OrderWindow] Stored {len(self._pending_nesting_images)} sheet images for later save")
+
+        # Zapisz obrazy arkuszy jako base64 (dla lokalnego podglądu)
         if 'sheet_images' in results and results['sheet_images']:
             import base64
             self.nesting_results['sheet_images_base64'] = []
@@ -2060,6 +2144,61 @@ class OrderWindow(ctk.CTkToplevel):
             logger.info("[OrderWindow] Allocation model enabled after nesting")
 
         self._bring_to_front()
+
+        # Automatycznie otwórz podgląd wyników
+        self.after(500, self._open_nesting_viewer)
+
+    def _open_nesting_viewer(self):
+        """Otwórz okno podglądu wyników nestingu"""
+        if not self.nesting_results:
+            messagebox.showinfo("Info", "Brak wyników nestingu do wyświetlenia")
+            return
+
+        try:
+            from orders.gui.nesting_results_viewer import open_nesting_results_viewer
+            open_nesting_results_viewer(self, self.order_id, self.nesting_results)
+        except Exception as e:
+            logger.error(f"[OrderWindow] Error opening nesting viewer: {e}")
+            messagebox.showerror("Błąd", f"Nie można otworzyć podglądu: {e}")
+
+    def _save_nesting_to_db_with_images(self):
+        """
+        Zapisz wyniki nestingu do bazy danych Supabase.
+
+        WAŻNE: Ta metoda musi być wywołana PO zapisaniu zamówienia do bazy,
+        ponieważ nesting_results ma FK constraint na orders.id.
+        """
+        if not self.order_id:
+            logger.warning("[OrderWindow] Cannot save nesting: no order_id")
+            return
+
+        if not self.nesting_results:
+            logger.warning("[OrderWindow] Cannot save nesting: no nesting_results")
+            return
+
+        try:
+            from orders.nesting_repository import get_nesting_repository
+
+            repo = get_nesting_repository()
+
+            # Zapisz dane nestingu
+            nesting_id = repo.save(self.order_id, self.nesting_results)
+
+            if nesting_id:
+                logger.info(f"[OrderWindow] Nesting saved to DB: {nesting_id}")
+
+                # Upload obrazów z _pending_nesting_images (zachowane przed konwersją do base64)
+                pending_images = getattr(self, '_pending_nesting_images', [])
+                if pending_images:
+                    paths = repo.upload_sheet_images(nesting_id, pending_images)
+                    logger.info(f"[OrderWindow] Uploaded {len(paths)} sheet images to Storage")
+                    # Wyczyść po zapisie
+                    self._pending_nesting_images = []
+            else:
+                logger.warning("[OrderWindow] Failed to save nesting to DB")
+
+        except Exception as e:
+            logger.error(f"[OrderWindow] Error saving nesting to DB: {e}")
 
     def _recalculate(self):
         """Przelicz koszty - używa wartości już obliczonych w detailed_panel (źródło prawdy)"""
@@ -2247,6 +2386,11 @@ class OrderWindow(ctk.CTkToplevel):
             self._show_message("warning", "Uwaga", "Podaj nazwę zamówienia")
             return
 
+        if not info.get('customer_id'):
+            logger.warning("[OrderWindow] No customer selected")
+            self._show_message("warning", "Uwaga", "Wybierz klienta przed zapisem")
+            return
+
         logger.info(f"[OrderWindow] Saving order: {self.order_id}")
         logger.debug(f"[OrderWindow] Order name: {info['name']}")
         logger.debug(f"[OrderWindow] Client: {info.get('client', 'BRAK')}")
@@ -2258,6 +2402,7 @@ class OrderWindow(ctk.CTkToplevel):
                 'name': info['name'],
                 'client': info.get('client', ''),
                 'customer_name': info.get('client', ''),  # alternatywna kolumna
+                'customer_id': info.get('customer_id'),  # UUID dla relacji FK
                 'date_in': info.get('date_in', date.today().isoformat()),
                 'date_due': info.get('date_due'),
                 'status': info.get('status', OrderStatus.DEFAULT),
@@ -2278,6 +2423,10 @@ class OrderWindow(ctk.CTkToplevel):
 
             if success:
                 logger.info(f"[OrderWindow] === ORDER SAVED SUCCESSFULLY === {self.order_id}")
+
+                # Zapisz wyniki nestingu do bazy (po zapisaniu zamówienia - FK constraint)
+                if self.nesting_results:
+                    self._save_nesting_to_db_with_images()
 
                 # Zapisz detale do katalogu produktów (jeśli zaznaczono)
                 if self.save_to_catalog_var.get():
@@ -2417,12 +2566,46 @@ class OrderWindow(ctk.CTkToplevel):
         # Załaduj dane zamówienia do panelu info
         self.info_panel.set_data(self.order_data)
 
-        # Załaduj wyniki nestingu (jeśli są)
+        # Załaduj wyniki nestingu (jeśli są w order_data lub pobierz z bazy)
         nesting_results = self.order_data.get('nesting_results', {})
+        if not nesting_results:
+            # Spróbuj pobrać z tabeli nesting_results przez NestingRepository
+            try:
+                from orders.nesting_repository import get_nesting_repository
+
+                repo = get_nesting_repository()
+                db_nesting = repo.load(self.order_id)
+                if db_nesting:
+                    nesting_results = db_nesting
+                    logger.info(f"[OrderWindow] Loaded nesting from DB: sheets={db_nesting.get('sheets_used')}, parts={db_nesting.get('total_parts')}")
+            except Exception as e:
+                logger.warning(f"[OrderWindow] Could not load nesting from DB: {e}")
+
         if nesting_results:
-            logger.info(f"[OrderWindow] Loading nesting results from saved data")
+            logger.info(f"[OrderWindow] Loading nesting results, keys: {list(nesting_results.keys())}")
             self.nesting_results = nesting_results
-            # TODO: Odtwórz wyświetlanie wyników nestingu w results_panel
+
+            # Przygotuj dane do wyświetlenia w results_panel
+            sheets_data = nesting_results.get('sheets_data', nesting_results.get('sheets', []))
+            if isinstance(sheets_data, str):
+                import json
+                sheets_data = json.loads(sheets_data)
+
+            if sheets_data:
+                display_sheets = []
+                for i, sheet in enumerate(sheets_data):
+                    display_sheets.append({
+                        'material': nesting_results.get('material', '?'),
+                        'thickness_mm': nesting_results.get('thickness', 0),
+                        'efficiency': sheet.get('efficiency', 0),
+                        'parts_count': len(sheet.get('placed_parts', [])),
+                        'total_cost': sheet.get('total_cost', 0)
+                    })
+                self.results_panel.update_results(display_sheets)
+
+            # Dodaj order_id do wyników dla viewera
+            self.nesting_results['order_id'] = self.order_id
+            self.results_panel.set_nesting_results(self.nesting_results)
 
         # Załaduj wyniki kosztów (jeśli są)
         cost_result = self.order_data.get('cost_result')
