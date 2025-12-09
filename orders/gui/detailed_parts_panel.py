@@ -1920,28 +1920,69 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
     def _get_foil_removal_price(self, material: str, thickness: float) -> float:
         """
-        Pobierz cene usuwania folii [PLN/m].
+        Pobierz cene usuwania folii [PLN/m] z bazy danych current_foil_rates.
 
-        POPRAWKA: Zwraca PLN/m (nie PLN/m2!) z PricingDataCache.
-        Poprzedni kod zwracal bledna wartosc 5.0 PLN.
+        WAZNE: Cena ZAWSZE pobierana z Supabase, NIE hardcoded!
 
         Args:
             material: Nazwa materialu
             thickness: Grubosc [mm]
 
         Returns:
-            Cena PLN/m (ok. 0.15-0.20)
+            Cena PLN/m z tabeli current_foil_rates
         """
+        # 1. Probuj z PricingDataCache (juz zaladowany z Supabase)
         try:
             from core.pricing_cache import get_pricing_cache
             cache = get_pricing_cache()
             if cache.is_loaded:
                 rate = cache.get_foil_rate(material, thickness)
                 if rate is not None:
+                    logger.debug(f"[Pricing] Foil {material}/{thickness}mm: {rate:.4f} PLN/m (PricingCache)")
                     return rate
-        except Exception:
-            pass
-        return self.FOIL_REMOVAL_PRICE  # 0.20 PLN/m fallback
+        except Exception as e:
+            logger.debug(f"[Pricing] PricingCache error: {e}")
+
+        # 2. Bezposrednie zapytanie do Supabase current_foil_rates
+        try:
+            from core.supabase_client import get_supabase_client
+            client = get_supabase_client()
+
+            # Okresl typ materialu
+            mat_upper = material.upper()
+            if '1.4' in mat_upper or 'INOX' in mat_upper:
+                material_type = 'stainless'
+            elif 'AL' in mat_upper:
+                material_type = 'aluminum'
+            else:
+                material_type = 'steel'
+
+            # Folia tylko dla stainless <= 5mm
+            if material_type != 'stainless' or thickness > 5.0:
+                return 0.0  # Folia nie dotyczy tego materialu
+
+            # Pobierz z current_foil_rates
+            response = client.table('current_foil_rates').select(
+                'price_per_meter, max_thickness'
+            ).eq(
+                'material_type', material_type
+            ).gte(
+                'max_thickness', thickness
+            ).order(
+                'max_thickness'
+            ).limit(1).execute()
+
+            if response.data and len(response.data) > 0:
+                price = float(response.data[0]['price_per_meter'])
+                logger.debug(f"[Pricing] Foil {material}/{thickness}mm: {price:.4f} PLN/m (Supabase direct)")
+                return price
+
+        except Exception as e:
+            logger.warning(f"[Pricing] Nie mozna pobrac ceny folii z Supabase: {e}")
+
+        # 3. OSTATNI FALLBACK - tylko gdy brak polaczenia z baza
+        logger.warning(f"[Pricing] Uzywam fallback dla folii - sprawdz polaczenie z baza!")
+        return self.FOIL_REMOVAL_PRICE  # 0.20 PLN/m - tylko gdy brak bazy
 
     def _get_pierce_rate(self, material: str, thickness: float) -> float:
         """

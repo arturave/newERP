@@ -328,31 +328,66 @@ class CostEngine:
 
     def _get_foil_rate(self, material: str = None, thickness: float = None) -> float:
         """
-        Pobierz stawke usuwania folii [PLN/m].
+        Pobierz stawke usuwania folii [PLN/m] z bazy danych current_foil_rates.
 
-        POPRAWKA: Uzywa PricingDataCache zamiast starego hardcoded 5.0 PLN!
+        WAZNE: Cena ZAWSZE pobierana z Supabase!
 
         Zrodlo: PricingDataCache -> Supabase current_foil_rates.price_per_meter
-        Fallback: DEFAULT_RATES['foil_pln_per_m'] = 0.20 PLN/m
+        Fallback: Bezposrednie zapytanie do Supabase
 
         Args:
             material: Nazwa materialu (opcjonalnie)
             thickness: Grubosc [mm] (opcjonalnie)
 
         Returns:
-            Stawka PLN/m (domyslnie ~0.15-0.20, NIE 5.0!)
+            Stawka PLN/m z tabeli current_foil_rates
         """
-        cache = self._get_pricing_cache()
+        mat = material or 'stainless'
+        th = thickness or 5.0
 
-        # Probuj z PricingDataCache
+        # 1. Probuj z PricingDataCache
+        cache = self._get_pricing_cache()
         if cache.is_loaded:
-            mat = material or 'stainless'
-            th = thickness or 5.0
             rate = cache.get_foil_rate(mat, th)
             if rate is not None:
                 return rate
 
-        # Fallback do DEFAULT_RATES (0.20 PLN/m)
+        # 2. Bezposrednie zapytanie do Supabase
+        try:
+            from core.supabase_client import get_supabase_client
+            client = get_supabase_client()
+
+            # Okresl typ materialu
+            mat_upper = mat.upper()
+            if '1.4' in mat_upper or 'INOX' in mat_upper:
+                material_type = 'stainless'
+            elif 'AL' in mat_upper:
+                material_type = 'aluminum'
+            else:
+                material_type = 'steel'
+
+            # Folia tylko dla stainless <= 5mm
+            if material_type != 'stainless' or th > 5.0:
+                return 0.0
+
+            response = client.table('current_foil_rates').select(
+                'price_per_meter'
+            ).eq(
+                'material_type', material_type
+            ).gte(
+                'max_thickness', th
+            ).order(
+                'max_thickness'
+            ).limit(1).execute()
+
+            if response.data and len(response.data) > 0:
+                return float(response.data[0]['price_per_meter'])
+
+        except Exception as e:
+            logger.warning(f"[CostEngine] Nie mozna pobrac ceny folii z Supabase: {e}")
+
+        # 3. Fallback - tylko gdy brak polaczenia z baza
+        logger.warning(f"[CostEngine] Uzywam fallback dla folii - sprawdz polaczenie z baza!")
         return DEFAULT_RATES['foil_pln_per_m']
 
     # ============================================================
