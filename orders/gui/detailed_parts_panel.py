@@ -1352,12 +1352,19 @@ class DetailedPartsPanel(ctk.CTkFrame):
             'thickness': 2.0,
             'quantity': 1,
             'bends': 0,
+            # Koszty inicjalizowane na 0 - obliczane przez _recalculate_all()
             'lm_cost': 0.0,
             'bending_cost': 0.0,
             'additional': 0.0,
             'weight': 0.0,
             'cutting_len': 0,
             'total_unit': 0.0,
+            'material_cost': 0.0,
+            'cutting_cost': 0.0,
+            'engraving_cost': 0.0,
+            'foil_cost': 0.0,
+            'piercing_cost': 0.0,
+            'base_material_cost': 0.0,
             'calc_with_material': self.calc_with_material_var.get(),
             'contour': [],
             'filepath': '',
@@ -1367,7 +1374,9 @@ class DetailedPartsPanel(ctk.CTkFrame):
         self.next_nr += 1
         self.parts_data.append(new_part)
         self._refresh_table()
-        self._update_summary()
+
+        # JEDNA PROCEDURA: Przelicz wszystkie koszty
+        self._recalculate_all()
 
         if self.on_parts_change:
             self.on_parts_change(self.parts_data)
@@ -1401,6 +1410,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                     'thickness': model_data.get('thickness_mm', 0),
                     'quantity': 1,
                     'bends': model_data.get('bends_count', 0),
+                    # Koszty inicjalizowane na 0 - obliczane przez _recalculate_all()
                     'lm_cost': 0.0,
                     'bending_cost': 0.0,
                     'additional': 0.0,
@@ -1409,6 +1419,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
                     'width': model_data.get('width', 0),
                     'height': model_data.get('height', 0),
                     'total_unit': 0.0,
+                    'material_cost': 0.0,
+                    'cutting_cost': 0.0,
+                    'engraving_cost': 0.0,
+                    'foil_cost': 0.0,
+                    'piercing_cost': 0.0,
+                    'base_material_cost': 0.0,
                     'calc_with_material': self.calc_with_material_var.get(),
                     'contour': model_data.get('contour', []),
                     'filepath': filepath,
@@ -1423,7 +1439,8 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
         if added > 0:
             self._refresh_table()
-            self._update_summary()
+            # JEDNA PROCEDURA: Przelicz wszystkie koszty
+            self._recalculate_all()
             messagebox.showinfo("Sukces", f"Dodano {added} detali z modeli 3D")
 
             if self.on_parts_change:
@@ -1483,38 +1500,19 @@ class DetailedPartsPanel(ctk.CTkFrame):
                     'source': 'catalog',
                     'catalog_id': product_id,
                     'filepath': product.get('cad_2d_path', ''),
+                    # Koszty inicjalizowane na 0 - obliczane przez _recalculate_all()
                     'lm_cost': 0.0,
                     'bending_cost': 0.0,
                     'additional': 0.0,
                     'total_unit': 0.0,
+                    'material_cost': 0.0,
+                    'cutting_cost': 0.0,
+                    'engraving_cost': 0.0,
+                    'foil_cost': 0.0,
+                    'piercing_cost': 0.0,
+                    'base_material_cost': 0.0,
                     'calc_with_material': self.calc_with_material_var.get(),
                 }
-
-                # Oblicz koszty
-                costs = self._calculate_lm_cost(part_data)
-                part_data.update({
-                    'material_cost': costs['material_cost'],
-                    'cutting_cost': costs['cutting_cost'],
-                    'engraving_cost': costs['engraving_cost'],
-                    'foil_cost': costs['foil_cost'],
-                    'piercing_cost': costs.get('piercing_cost', 0),
-                    'lm_cost': costs['total_lm'],
-                    'base_lm_cost': costs['total_lm'],
-                    'base_material_cost': costs['material_cost'],
-                    '_material_formula': costs.get('material_formula', ''),
-                    '_cutting_formula': costs.get('cutting_formula', ''),
-                    '_foil_formula': costs.get('foil_formula', ''),
-                    '_piercing_formula': costs.get('piercing_formula', ''),
-                })
-
-                if part_data['bends'] > 0:
-                    part_data['bending_cost'] = part_data['bends'] * self.BEND_PRICE
-
-                part_data['total_unit'] = (
-                    part_data['lm_cost'] +
-                    part_data['bending_cost'] +
-                    part_data['additional']
-                )
 
                 self.next_nr += 1
                 self.parts_data.append(part_data)
@@ -1523,7 +1521,9 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
             if added > 0:
                 self._refresh_table()
-                self._update_summary()
+                # JEDNA PROCEDURA: Przelicz wszystkie koszty
+                logger.info(f"[DetailedParts] add_from_catalog: Wywoluje _recalculate_all()")
+                self._recalculate_all()
                 messagebox.showinfo("Sukces", f"Dodano {added} produktów z katalogu")
 
                 if self.on_parts_change:
@@ -2005,7 +2005,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
     # === PUBLIC API ===
 
     def set_parts(self, parts: List[Dict]):
-        """Ustaw liste detali"""
+        """
+        Ustaw liste detali i przelicz koszty.
+
+        WAZNE: Koszty sa obliczane JEDNA procedura _recalculate_all()
+        na koncu, z uwzglednieniem modelu alokacji.
+        """
         self.parts_data = []
         self.next_nr = 1
 
@@ -2024,7 +2029,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 'thickness': float(part.get('thickness_mm', part.get('thickness', 0)) or 0),
                 'quantity': int(part.get('quantity', 1) or 1),
                 'bends': int(part.get('bends', part.get('bends_count', 0)) or 0),
-                'lm_cost': 0.0,  # Obliczony ponizej
+                'lm_cost': 0.0,  # Obliczane przez _recalculate_all()
                 'bending_cost': float(part.get('bending_cost', part.get('bending', 0)) or 0),
                 'additional': float(part.get('additional', 0) or 0),
                 'weight': weight,
@@ -2032,7 +2037,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 'cutting_len': cutting_len,
                 'engraving_len': engraving_len,  # Dlugosc graweru
                 'piercing_count': int(part.get('piercing_count', 1) or 1),
-                'total_unit': 0.0,
+                'total_unit': 0.0,  # Obliczane przez _recalculate_all()
                 'calc_with_material': self.calc_with_material_var.get(),
                 'contour': part.get('contour', []),
                 'holes': part.get('holes', []),
@@ -2043,46 +2048,25 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 'area_gross_mm2': float(part.get('area_gross_mm2', 0) or 0),
                 'area_net_mm2': float(part.get('area_net_mm2', 0) or 0),
                 'area_bbox_mm2': float(part.get('area_bbox_mm2', 0) or 0),
-                'source': part.get('source', 'dxf')
+                'source': part.get('source', 'dxf'),
+                # Inicjalizuj skladniki kosztowe na 0 (obliczane przez _recalculate_all)
+                'material_cost': 0.0,
+                'cutting_cost': 0.0,
+                'engraving_cost': 0.0,
+                'foil_cost': 0.0,
+                'piercing_cost': 0.0,
+                'base_material_cost': 0.0,
             }
-
-            # Oblicz L+M cost jesli nie podano
-            existing_lm = float(part.get('lm_cost', part.get('unit_cost', 0)) or 0)
-            if existing_lm > 0:
-                part_data['lm_cost'] = existing_lm
-            else:
-                # _calculate_lm_cost zwraca Dict ze skladnikami
-                costs = self._calculate_lm_cost(part_data)
-                part_data['material_cost'] = costs['material_cost']
-                part_data['cutting_cost'] = costs['cutting_cost']
-                part_data['engraving_cost'] = costs['engraving_cost']
-                part_data['foil_cost'] = costs['foil_cost']
-                part_data['piercing_cost'] = costs.get('piercing_cost', 0)
-                part_data['base_material_cost'] = costs['material_cost']
-                part_data['lm_cost'] = costs['total_lm']
-                part_data['base_lm_cost'] = costs['total_lm']
-                # Zapisz formuly dla loggera
-                part_data['_material_formula'] = costs.get('material_formula', '')
-                part_data['_cutting_formula'] = costs.get('cutting_formula', '')
-                part_data['_foil_formula'] = costs.get('foil_formula', '')
-                part_data['_piercing_formula'] = costs.get('piercing_formula', '')
-
-            # Oblicz bending cost jesli sa giecia
-            if part_data['bends'] > 0 and part_data['bending_cost'] == 0:
-                part_data['bending_cost'] = part_data['bends'] * self.BEND_PRICE
-
-            # Oblicz total
-            part_data['total_unit'] = (
-                part_data['lm_cost'] +
-                part_data['bending_cost'] +
-                part_data['additional']
-            )
 
             self.next_nr += 1
             self.parts_data.append(part_data)
 
+        # Odswież tabelę (dane bez kosztów)
         self._refresh_table()
-        self._update_summary()
+
+        # JEDNA PROCEDURA OBLICZENIOWA: Przelicz wszystkie koszty z modelem alokacji
+        logger.info(f"[DetailedParts] set_parts: Wywoluje _recalculate_all() dla {len(self.parts_data)} detali")
+        self._recalculate_all()
 
     def get_parts(self) -> List[Dict]:
         """Pobierz liste detali"""
