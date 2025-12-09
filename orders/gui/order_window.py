@@ -709,6 +709,9 @@ class PartsListPanel(ctk.CTkFrame):
         if files:
             logger.info(f"[PartsListPanel] Selected {len(files)} files")
             self._load_files_async(list(files))
+            # Automatyczne przeliczenie po zmianie parametrów (w tym narzutu)
+            
+
 
     def _add_folder(self):
         """Dodaj folder z plikami DXF"""
@@ -858,6 +861,8 @@ class PartsListPanel(ctk.CTkFrame):
                     messagebox.showerror("Błąd", f"Brak wymaganych modułów: {e}", parent=parent_win)
                     parent_win.after(50, lambda: parent_win.focus_force())
                 self.after(0, show_error)
+
+        # Automatyczne przeliczenie po zmianie parametrów (w tym narzutu)
 
         thread = threading.Thread(target=load_thread, daemon=True)
         thread.start()
@@ -1952,6 +1957,11 @@ class OrderWindow(ctk.CTkToplevel):
         logger.info(f"[OrderWindow] Loading complete: {count} parts loaded")
         self._bring_to_front()  # Przywróć focus po załadowaniu
 
+        # WAZNE: Przelicz koszty po zaladowaniu plikow
+        if count > 0:
+            logger.info(f"[OrderWindow] Wywoluje _recalculate() po zaladowaniu {count} detali")
+            self._recalculate()
+
     def _on_params_change(self, params: Dict):
         """Callback - zmiana parametrów - automatycznie przelicza koszty"""
         logger.debug(f"[OrderWindow] Params changed: {params}")
@@ -1960,7 +1970,8 @@ class OrderWindow(ctk.CTkToplevel):
 
     def _run_nesting(self):
         """Uruchom nesting"""
-        parts = self.parts_panel.get_parts()
+        # Użyj detailed_panel - ma obliczone koszty
+        parts = self.detailed_panel.get_parts()
         if not parts:
             self._show_message("warning", "Uwaga", "Dodaj detale przed uruchomieniem nestingu")
             return
@@ -2051,8 +2062,13 @@ class OrderWindow(ctk.CTkToplevel):
         self._bring_to_front()
 
     def _recalculate(self):
-        """Przelicz koszty"""
-        parts = self.parts_panel.get_parts()
+        """Przelicz koszty - używa wartości już obliczonych w detailed_panel (źródło prawdy)"""
+        # WAŻNE: Najpierw przelicz koszty w detailed_panel
+        if hasattr(self, 'detailed_panel') and self.detailed_panel:
+            self.detailed_panel._recalculate_all()
+
+        # Użyj detailed_panel - ma obliczone koszty (material_cost, cutting_cost, etc.)
+        parts = self.detailed_panel.get_parts()
         if not parts:
             self._show_message("warning", "Uwaga", "Brak detali do przeliczenia")
             return
@@ -2070,11 +2086,6 @@ class OrderWindow(ctk.CTkToplevel):
         logger.info(f"[CostCalc] Wlaczone koszty: material={params.get('include_material')}, ciecie={params.get('include_cutting')}, folia={params.get('include_foil')}, piercing={params.get('include_piercing')}, operacyjne={params.get('include_operational')}")
 
         try:
-            from quotations.pricing.cost_calculator import calculate_quick_estimate
-
-            groups = self.parts_panel.get_parts_by_group()
-            logger.info(f"[CostCalc] Grupy materialowe: {len(groups)}")
-
             # Pobierz utylizację z nestingu jeśli dostępna
             nesting_efficiency = 0.75  # Domyślna utylizacja
             nesting_sheets = 0
@@ -2087,6 +2098,7 @@ class OrderWindow(ctk.CTkToplevel):
                     nesting_sheets = len(sheets)
                     logger.info(f"[CostCalc] Utylizacja z nestingu: {nesting_efficiency*100:.1f}%, arkuszy: {nesting_sheets}")
 
+            # Inicjalizuj wyniki
             total_result = {
                 'material_cost': 0, 'cutting_cost': 0, 'foil_cost': 0,
                 'piercing_cost': 0, 'operational_cost': 0,
@@ -2097,67 +2109,50 @@ class OrderWindow(ctk.CTkToplevel):
                 'average_efficiency': nesting_efficiency
             }
 
-            for (material, thickness), group_parts in groups.items():
-                logger.info(f"[CostCalc] --- Grupa: {material} {thickness}mm ({len(group_parts)} detali) ---")
+            # === UŻYWAJ KOSZTÓW Z PARTS_PANEL (źródło prawdy) ===
+            # Koszty są już obliczone w detailed_parts_panel z naddatkiem 35%
+            for part in parts:
+                qty = int(part.get('quantity', 1) or 1)
 
-                # Loguj szczegoly detali w grupie
-                total_qty = sum(p.get('quantity', 1) for p in group_parts)
-                total_area_mm2 = sum(p.get('width', 0) * p.get('height', 0) * p.get('quantity', 1) for p in group_parts)
-                logger.info(f"[CostCalc]   Laczna ilosc: {total_qty}, Powierzchnia BB: {total_area_mm2/1e6:.3f} m2")
-
-                estimate = calculate_quick_estimate(group_parts, material, thickness)
-
-                logger.info(f"[CostCalc]   Szacunek kosztow:")
-                logger.info(f"[CostCalc]     - Material:    {estimate.get('material_cost', 0):>10.2f} PLN")
-                logger.info(f"[CostCalc]     - Ciecie:      {estimate.get('cutting_cost', 0):>10.2f} PLN")
-                logger.info(f"[CostCalc]     - Folia:       {estimate.get('foil_cost', 0):>10.2f} PLN")
-                logger.info(f"[CostCalc]     - Piercing:    {estimate.get('piercing_cost', 0):>10.2f} PLN")
-                logger.info(f"[CostCalc]     - Operacyjne:  {estimate.get('operational_cost', 0):>10.2f} PLN")
-                logger.info(f"[CostCalc]     - Waga:        {estimate.get('total_weight_kg', 0):>10.2f} kg")
-                logger.info(f"[CostCalc]     - Arkusze:     {estimate.get('estimated_sheets', 0):>10}")
-
-                foil_auto_enabled = False
-                if self.cost_service:
-                    try:
-                        foil_auto_enabled = self.cost_service.repository.should_auto_enable_foil_removal(material, thickness)
-                        if foil_auto_enabled:
-                            logger.info(f"[CostCalc]   Auto-folia wlaczona dla {material} {thickness}mm")
-                    except Exception as e:
-                        logger.warning(f"[CostCalc]   Blad sprawdzania auto-folii: {e}")
-
-                # Koszty materiału z uwzględnieniem utylizacji
+                # Materiał
                 if params.get('include_material', True):
-                    base_material_cost = estimate.get('material_cost', 0)
+                    total_result['material_cost'] += float(part.get('material_cost', 0) or 0) * qty
 
-                    # Metoda alokacji kosztów materiału
-                    if allocation_model == "UNIT" and nesting_efficiency > 0:
-                        # Prostokąt otaczający: równy podział kosztów
-                        material_cost = base_material_cost / nesting_efficiency
-                        logger.info(f"[CostCalc]   Mat. (prostokąt otaczający): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
-                    elif allocation_model == "PER_SHEET" and nesting_efficiency > 0:
-                        # Na arkusz: pełny koszt arkusza
-                        material_cost = base_material_cost / nesting_efficiency
-                        logger.info(f"[CostCalc]   Mat. (na arkusz): {base_material_cost:.2f} / {nesting_efficiency:.2f} = {material_cost:.2f} PLN")
-                    else:
-                        # Proporcjonalny: bez zmiany
-                        material_cost = base_material_cost
-                        logger.info(f"[CostCalc]   Mat. (proporcjonalny): {material_cost:.2f} PLN")
-
-                    total_result['material_cost'] += material_cost
-
+                # Cięcie
                 if params.get('include_cutting', True):
-                    total_result['cutting_cost'] += estimate.get('cutting_cost', 0)
-                # Folia: tylko gdy checkbox włączony I materiał wymaga folii
-                if params.get('include_foil', True) and foil_auto_enabled:
-                    total_result['foil_cost'] += estimate.get('foil_cost', 0)
-                if params.get('include_piercing', True):
-                    total_result['piercing_cost'] += estimate.get('piercing_cost', 0)
-                if params.get('include_operational', True):
-                    total_result['operational_cost'] += estimate.get('operational_cost', 0)
+                    total_result['cutting_cost'] += float(part.get('cutting_cost', 0) or 0) * qty
 
-                total_result['total_weight_kg'] += estimate.get('total_weight_kg', 0)
-                if not nesting_sheets:
-                    total_result['total_sheets'] += estimate.get('estimated_sheets', 0)
+                # Folia - tylko gdy checkbox włączony
+                if params.get('include_foil', True):
+                    total_result['foil_cost'] += float(part.get('foil_cost', 0) or 0) * qty
+
+                # Piercing
+                if params.get('include_piercing', True):
+                    total_result['piercing_cost'] += float(part.get('piercing_cost', 0) or 0) * qty
+
+                # Waga
+                total_result['total_weight_kg'] += float(part.get('weight', part.get('weight_kg', 0)) or 0) * qty
+
+            # Koszty operacyjne - TYLKO gdy mamy rzeczywisty nesting
+            if params.get('include_operational', True) and has_nesting:
+                # 40 PLN za arkusz (z konfiguracji)
+                sheet_handling_cost = 40.0
+                total_result['operational_cost'] = nesting_sheets * sheet_handling_cost
+                logger.info(f"[CostCalc] Operacyjne: {nesting_sheets} arkuszy × {sheet_handling_cost:.2f} = {total_result['operational_cost']:.2f} PLN")
+            else:
+                # Bez nestingu - nie znamy liczby arkuszy, więc 0
+                total_result['operational_cost'] = 0
+                if params.get('include_operational', True):
+                    logger.info(f"[CostCalc] Operacyjne: 0 PLN (brak nestingu - nie znamy liczby arkuszy)")
+
+            # Loguj koszty z parts_panel
+            logger.info(f"[CostCalc] Koszty z parts_panel (zrodlo prawdy):")
+            logger.info(f"[CostCalc]   Material:      {total_result['material_cost']:>12.2f} PLN")
+            logger.info(f"[CostCalc]   Ciecie:        {total_result['cutting_cost']:>12.2f} PLN")
+            logger.info(f"[CostCalc]   Folia:         {total_result['foil_cost']:>12.2f} PLN")
+            logger.info(f"[CostCalc]   Piercing:      {total_result['piercing_cost']:>12.2f} PLN")
+            logger.info(f"[CostCalc]   Operacyjne:    {total_result['operational_cost']:>12.2f} PLN")
+            logger.info(f"[CostCalc]   Waga:          {total_result['total_weight_kg']:>12.2f} kg")
 
             total_result['subtotal'] = sum([
                 total_result['material_cost'], total_result['cutting_cost'],
@@ -2208,11 +2203,9 @@ class OrderWindow(ctk.CTkToplevel):
             if has_nesting:
                 status_msg = f"Koszty z nestingu (utylizacja: {nesting_efficiency*100:.0f}%, arkuszy: {nesting_sheets})"
             else:
-                status_msg = "Koszty przeliczone (szacunek bez nestingu)"
+                status_msg = "Koszty przeliczone (bez nestingu - operacyjne=0)"
             if markup_pct != 0:
                 status_msg += f" | Narzut: {markup_pct:+g}%"
-            if self.cost_service:
-                status_msg += " | CostService"
             self.lbl_status.configure(text=status_msg)
 
         except Exception as e:
@@ -2236,7 +2229,8 @@ class OrderWindow(ctk.CTkToplevel):
         """Zapisz zamówienie"""
         logger.info(f"[OrderWindow] === SAVE ORDER START === {self.order_id}")
 
-        parts = self.parts_panel.get_parts()
+        # Użyj detailed_panel - ma obliczone koszty
+        parts = self.detailed_panel.get_parts()
         info = self.info_panel.get_data()
         params = self.params_panel.get_params()
 
