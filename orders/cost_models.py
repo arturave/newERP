@@ -16,7 +16,8 @@ import json
 
 class AllocationModel(Enum):
     """Model alokacji kosztów arkusza na części"""
-    PROPORTIONAL = "proportional"       # Proporcjonalnie do powierzchni
+    PROPORTIONAL = "proportional"       # Proporcjonalnie do contour_area (post-nesting)
+    BBOX = "bbox"                       # Proporcjonalnie do bbox (width × height)
     PER_UNIT = "per_unit"              # Równo na każdą sztukę
     PER_SHEET = "per_sheet"            # Pełny koszt arkusza na każdy detal
     PER_SHEET_MULTIPLIER = "per_sheet"  # Alias dla kompatybilności

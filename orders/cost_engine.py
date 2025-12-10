@@ -543,11 +543,30 @@ class CostEngine:
             # Na arkusz: każdy detal ponosi pełny koszt
             return [sheet_cost.quantize(Decimal('0.01')) for _ in parts]
 
-        else:  # PROPORTIONAL (domyślny)
-            # Proporcjonalnie do occupied_area
+        elif model == AllocationModel.BBOX:
+            # Proporcjonalnie do BBOX (width × height) - pre-nesting lub brak contour_area
             areas = []
             for p in parts:
-                area = float(p.get('occupied_area', 0) or 0)
+                w = float(p.get('width', 0) or 0)
+                h = float(p.get('height', 0) or 0)
+                areas.append(w * h)
+
+            total_area = sum(areas)
+            if total_area <= 0:
+                cost_per_part = sheet_cost / n_parts
+                return [cost_per_part.quantize(Decimal('0.01')) for _ in parts]
+
+            return [
+                (sheet_cost * Decimal(str(area / total_area))).quantize(Decimal('0.01'))
+                for area in areas
+            ]
+
+        else:  # PROPORTIONAL (domyślny) - post-nesting z contour_area
+            # Proporcjonalnie do contour_area (rzeczywista powierzchnia konturu)
+            areas = []
+            for p in parts:
+                # Preferuj contour_area, fallback do area_gross_mm2, potem bbox
+                area = float(p.get('contour_area', 0) or p.get('area_gross_mm2', 0) or 0)
                 if area <= 0:
                     # Fallback: bounding box
                     w = float(p.get('width', 0) or 0)

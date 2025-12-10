@@ -1243,9 +1243,11 @@ class CostParametersPanel(ctk.CTkFrame):
 
         # Pobierz model alokacji z detailed_panel (przez getter)
         alloc_map = {
-            "Proporcjonalny": "PROPORTIONAL",
-            "Prostokąt otaczający": "UNIT",
-            "Na arkusz": "PER_SHEET"
+            "Proporcjonalny": "PROPORTIONAL",       # Post-nesting: proporcjonalnie do contour_area
+            "Bbox (pre-nesting)": "BBOX",           # Pre-nesting: proporcjonalnie do bbox
+            "Równy podział": "PER_UNIT",            # Równo na każdy detal
+            "Prostokąt otaczający": "BBOX",         # Alias dla kompatybilności
+            "Na arkusz": "PER_SHEET"                # Pełny koszt na każdy detal
         }
         alloc_value = self.allocation_model_getter() if self.allocation_model_getter else "Proporcjonalny"
         allocation = alloc_map.get(alloc_value, "PROPORTIONAL")

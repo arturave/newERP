@@ -1077,7 +1077,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         if allocation_model == "Równy podział":
             self._apply_equal_allocation()  # Równy podział kosztów arkuszy z nestingu
         elif allocation_model == "Bbox (pre-nesting)":
-            pass  # Koszty bazowe (bounding box) są już obliczone w _recalculate_part_base
+            self._apply_bbox_allocation()  # Proporcjonalnie do bbox (width × height)
         elif allocation_model == "Proporcjonalny":
             self._apply_nesting_proportional_allocation()  # Post-nesting proporcjonalny
         # Fallback - dla kompatybilności ze starymi nazwami
@@ -1289,6 +1289,72 @@ class DetailedPartsPanel(ctk.CTkFrame):
         for part in self.parts_data:
             if not part.get('_manual_lm_cost', False):
                 part['material_cost'] = equal_material
+                part['lm_cost'] = (part['material_cost'] +
+                                  float(part.get('cutting_cost', 0) or 0) +
+                                  float(part.get('engraving_cost', 0) or 0) +
+                                  float(part.get('foil_cost', 0) or 0) +
+                                  float(part.get('piercing_cost', 0) or 0))
+
+            lm_cost = float(part.get('lm_cost', 0) or 0)
+            bending_cost = float(part.get('bending_cost', 0) or 0)
+            additional = float(part.get('additional', 0) or 0)
+            part['total_unit'] = lm_cost + bending_cost + additional
+
+    def _apply_bbox_allocation(self):
+        """BBOX allocation: koszt arkuszy z nestingu proporcjonalnie do bbox (width × height).
+
+        Model używany przed nestingiem lub gdy chcemy alokować wg. prostokątów otaczających.
+        RÓŻNI SIĘ od Proporcjonalny (który używa contour_area).
+        """
+        if not self.parts_data:
+            return
+
+        non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
+        if not non_manual_parts:
+            for part in self.parts_data:
+                lm_cost = float(part.get('lm_cost', 0) or 0)
+                bending_cost = float(part.get('bending_cost', 0) or 0)
+                additional = float(part.get('additional', 0) or 0)
+                part['total_unit'] = lm_cost + bending_cost + additional
+            return
+
+        # Pobierz koszt arkuszy z nestingu
+        total_sheet_cost = 0.0
+        if hasattr(self, 'nesting_results') and self.nesting_results:
+            sheets = self.nesting_results.get('sheets', [])
+            if sheets:
+                for sheet in sheets:
+                    sheet_cost = float(sheet.get('used_sheet_cost', 0) or sheet.get('sheet_cost', 0) or 0)
+                    if sheet_cost > 0:
+                        total_sheet_cost += sheet_cost
+                logger.info(f"[Alokacja BBOX] Koszt arkuszy z nestingu: {total_sheet_cost:.2f}")
+
+        # Fallback do sumy bazowych kosztów materiału
+        if total_sheet_cost <= 0:
+            total_sheet_cost = sum(float(p.get('base_material_cost', 0) or 0) for p in non_manual_parts)
+            logger.info(f"[Alokacja BBOX] Fallback do bazowych: {total_sheet_cost:.2f}")
+
+        # Oblicz sumę BBOX areas (width × height)
+        total_bbox_area = 0.0
+        for part in non_manual_parts:
+            w = float(part.get('width', 0) or 0)
+            h = float(part.get('height', 0) or 0)
+            bbox_area = w * h
+            total_bbox_area += bbox_area
+
+        logger.info(f"[Alokacja BBOX] Suma bbox_area: {total_bbox_area:.0f} mm2, "
+                   f"Koszt arkuszy: {total_sheet_cost:.2f} PLN")
+
+        # Przypisz proporcjonalnie do BBOX area
+        for part in self.parts_data:
+            if not part.get('_manual_lm_cost', False):
+                w = float(part.get('width', 0) or 0)
+                h = float(part.get('height', 0) or 0)
+                bbox_area = w * h
+
+                share = bbox_area / total_bbox_area if total_bbox_area > 0 else 0
+                part['material_cost'] = total_sheet_cost * share
+
                 part['lm_cost'] = (part['material_cost'] +
                                   float(part.get('cutting_cost', 0) or 0) +
                                   float(part.get('engraving_cost', 0) or 0) +

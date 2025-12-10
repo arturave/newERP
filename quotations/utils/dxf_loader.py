@@ -362,19 +362,47 @@ def load_dxf(filepath: str, arc_resolution: int = 8) -> Optional[DXFPart]:
         
         # Zbuduj kontur zewnętrzny
         outer_contour = build_contour_from_entities(outer_entities, arc_resolution)
-        
+
+        # Znajdź wszystkie okręgi (potencjalne kontury zewnętrzne lub otwory)
+        circles = [e for e in all_entities if e.dxftype() == 'CIRCLE'
+                   and not _is_ignored_layer(e.dxf.layer)]
+
+        # Sprawdź czy istnieje okrąg większy niż zbudowany kontur
+        # To może być prawdziwy kontur zewnętrzny (np. okrągła podkładka z otworami)
+        if circles:
+            largest_circle = max(circles, key=lambda c: c.dxf.radius)
+            largest_radius = largest_circle.dxf.radius
+            largest_diameter = largest_radius * 2
+
+            # Oblicz rozmiar zbudowanego konturu
+            if outer_contour and len(outer_contour) >= 3:
+                contour_min_x = min(p[0] for p in outer_contour)
+                contour_max_x = max(p[0] for p in outer_contour)
+                contour_min_y = min(p[1] for p in outer_contour)
+                contour_max_y = max(p[1] for p in outer_contour)
+                contour_width = contour_max_x - contour_min_x
+                contour_height = contour_max_y - contour_min_y
+                contour_max_dim = max(contour_width, contour_height)
+            else:
+                contour_max_dim = 0
+
+            # Jeśli największy okrąg jest znacznie większy niż zbudowany kontur,
+            # użyj go jako konturu zewnętrznego
+            if largest_diameter > contour_max_dim * 1.5:
+                logger.info(f"Using largest CIRCLE (r={largest_radius:.2f}mm) as outer contour "
+                           f"instead of built contour ({contour_max_dim:.2f}mm)")
+                cx, cy = largest_circle.dxf.center.x, largest_circle.dxf.center.y
+                outer_contour = circle_to_points(cx, cy, largest_radius, resolution=64)
+
         # Jeśli nie udało się zbudować konturu, spróbuj z okręgami (np. detal to tylko podkładka)
         if not outer_contour or len(outer_contour) < 3:
-            # Może to jest pojedynczy okrąg?
-            circles = [e for e in all_entities if e.dxftype() == 'CIRCLE' 
-                       and not _is_ignored_layer(e.dxf.layer)]
             if circles:
                 # Znajdź największy okrąg
                 largest = max(circles, key=lambda c: c.dxf.radius)
                 cx, cy = largest.dxf.center.x, largest.dxf.center.y
                 r = largest.dxf.radius
-                outer_contour = circle_to_points(cx, cy, r, resolution=32)
-        
+                outer_contour = circle_to_points(cx, cy, r, resolution=64)
+
         if not outer_contour or len(outer_contour) < 3:
             logger.warning(f"Could not build contour from {filepath}")
             return None
