@@ -22,6 +22,7 @@ Layout:
 """
 
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, Optional, Callable, List, Tuple
 from datetime import datetime, timedelta
