@@ -391,62 +391,64 @@ class AllocationHelpDialog(ctk.CTkToplevel):
         content = ctk.CTkScrollableFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # === PROPORCJONALNY ===
+        # === PROPORCJONALNY (post-nesting) ===
         self._add_model_section(
             content,
-            title="1. Proporcjonalny",
+            title="1. Proporcjonalny (POST-NESTING)",
             color=Theme.ACCENT_SUCCESS,
-            description="""Koszty arkusza (materiał, cięcie, obsługa) są rozdzielane
-proporcjonalnie do powierzchni każdego detalu.
+            description="""Koszty arkusza z nestingu (przycięty do maxY) są rozdzielane
+proporcjonalnie do powierzchni konturu (contour_area) każdego detalu.
 
-Wzór: Koszt_detalu = Koszt_arkusza × (Powierzchnia_detalu / Powierzchnia_wszystkich)
+Wzór: Koszt_detalu = Koszt_arkuszy × (Contour_area_detalu / Suma_contour_areas)
 
 Przykład:
-• Arkusz 1000×2000mm, koszt 500 PLN
-• Detal A: 200×300mm = 0.06m² (30% powierzchni) → 150 PLN
-• Detal B: 400×350mm = 0.14m² (70% powierzchni) → 350 PLN
+• Arkusz przycięty do użytej wysokości, koszt 400 PLN
+• Detal A: contour_area = 6000 mm² (30%) → 120 PLN
+• Detal B: contour_area = 14000 mm² (70%) → 280 PLN
 
 Zalety: Sprawiedliwy podział, większe detale = większy koszt
-Zastosowanie: Standardowa produkcja, wyceny dla klientów""",
+Wymaga: Wykonania nestingu przed przeliczeniem
+Zastosowanie: ZALECANY dla wszystkich wycen po nestingu""",
             graphic_type="proportional"
         )
 
-        # === PROSTOKĄT OTACZAJĄCY ===
+        # === RÓWNY PODZIAŁ (post-nesting) ===
         self._add_model_section(
             content,
-            title="2. Prostokąt otaczający",
+            title="2. Równy podział (POST-NESTING)",
             color=Theme.ACCENT_WARNING,
-            description="""Koszty arkusza są dzielone równo między wszystkie detale
-bez względu na ich rozmiar.
+            description="""Koszty arkusza z nestingu są dzielone równo między wszystkie
+detale bez względu na ich rozmiar.
 
-Wzór: Koszt_detalu = Koszt_arkusza / Liczba_detali
+Wzór: Koszt_detalu = Koszt_arkuszy / Liczba_detali
 
 Przykład:
-• Arkusz 1000×2000mm, koszt 500 PLN
-• 10 detali na arkuszu → każdy detal: 50 PLN
+• Arkusze z nestingu, koszt łączny 400 PLN
+• 10 detali na arkuszach → każdy detal: 40 PLN
 
 Zalety: Prosty w obliczeniach, przewidywalny koszt jednostkowy
+Wymaga: Wykonania nestingu przed przeliczeniem
 Zastosowanie: Produkcja seryjna identycznych części""",
             graphic_type="unit"
         )
 
-        # === NA ARKUSZ ===
+        # === BBOX (pre-nesting) ===
         self._add_model_section(
             content,
-            title="3. Na arkusz",
+            title="3. Bbox (PRE-NESTING)",
             color=Theme.ACCENT_DANGER,
-            description="""Każdy detal ponosi pełny koszt arkusza z którego jest wycinany.
-Używane gdy detal zajmuje większość arkusza lub przy pojedynczych sztukach.
+            description="""Materiał wyceniany z bounding box detalu (prostokąt otaczający)
+z naddatkiem +35%. NIE WYMAGA nestingu.
 
-Wzór: Koszt_detalu = Koszt_arkusza (pełny)
+Wzór: Koszt_materiału = Waga_z_bbox × Cena_za_kg × 1.35
 
 Przykład:
-• Arkusz 1000×2000mm, koszt 500 PLN
-• Jeden duży detal 900×1900mm → 500 PLN
-• Odpad nie jest uwzględniany w wycenie
+• Detal 200×300mm, grubość 3mm, stal
+• Waga bbox: 0.2×0.3×0.003×7850 = 1.41 kg
+• Koszt: 1.41 kg × 5 PLN/kg × 1.35 = 9.52 PLN
 
-Zalety: Bezpieczna wycena, pokrywa ryzyko odpadu
-Zastosowanie: Prototypy, duże pojedyncze detale, niski nesting""",
+Zalety: Szybka wycena bez nestingu, bezpieczna marża
+Zastosowanie: Wstępne wyceny, prototypy, pojedyncze sztuki""",
             graphic_type="sheet"
         )
 
@@ -625,10 +627,10 @@ class DetailedPartsPanel(ctk.CTkFrame):
         self.allocation_model_var = ctk.StringVar(value="Proporcjonalny")
         self.allocation_combo = ctk.CTkComboBox(
             alloc_frame,
-            values=["Proporcjonalny", "Prostokąt otaczający", "Na arkusz"],
+            values=["Proporcjonalny", "Równy podział", "Bbox (pre-nesting)"],
             variable=self.allocation_model_var,
             command=self._on_allocation_change,
-            width=120, height=24,
+            width=140, height=24,
             font=ctk.CTkFont(size=10),
             state="disabled"  # Domyslnie wylaczony - aktywny dopiero po nestingu
         )
@@ -1072,11 +1074,17 @@ class DetailedPartsPanel(ctk.CTkFrame):
             self._recalculate_part_base(idx)
 
         # Krok 2: Zastosuj model alokacji
-        if allocation_model == "Prostokąt otaczający":
-            self._apply_unit_allocation()
+        if allocation_model == "Równy podział":
+            self._apply_equal_allocation()  # Równy podział kosztów arkuszy z nestingu
+        elif allocation_model == "Bbox (pre-nesting)":
+            pass  # Koszty bazowe (bounding box) są już obliczone w _recalculate_part_base
+        elif allocation_model == "Proporcjonalny":
+            self._apply_nesting_proportional_allocation()  # Post-nesting proporcjonalny
+        # Fallback - dla kompatybilności ze starymi nazwami
+        elif allocation_model == "Prostokąt otaczający":
+            self._apply_equal_allocation()
         elif allocation_model == "Na arkusz":
-            self._apply_per_sheet_allocation()
-        # Proporcjonalny - koszty bazowe są już poprawne
+            self._apply_equal_allocation()
 
         # Krok 3: Aktualizuj wiersze w tabeli
         for idx in range(len(self.parts_data)):
@@ -1164,8 +1172,81 @@ class DetailedPartsPanel(ctk.CTkFrame):
         total_unit = lm_cost + bending_cost + additional
         part['total_unit'] = total_unit
 
-    def _apply_unit_allocation(self):
-        """Prostokąt otaczający: równy podział kosztów MATERIAŁU między detale.
+    def _apply_nesting_proportional_allocation(self):
+        """POST-NESTING proporcjonalny: koszt arkuszy z nestingu proporcjonalnie do contour_area.
+
+        WAŻNE: Używa danych z nestingu - arkusz przycięty do maxY.
+        Koszt materiału rozdzielany proporcjonalnie do powierzchni konturu (contour_area).
+        Koszty cięcia, graweru, folii i piercingu pozostają STAŁE.
+        """
+        if not self.parts_data:
+            return
+
+        non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
+        if not non_manual_parts:
+            for part in self.parts_data:
+                lm_cost = float(part.get('lm_cost', 0) or 0)
+                bending_cost = float(part.get('bending_cost', 0) or 0)
+                additional = float(part.get('additional', 0) or 0)
+                part['total_unit'] = lm_cost + bending_cost + additional
+            return
+
+        # Pobierz koszt arkuszy z nestingu
+        total_sheet_cost = 0.0
+        if hasattr(self, 'nesting_results') and self.nesting_results:
+            sheets = self.nesting_results.get('sheets', [])
+            if sheets:
+                # Suma kosztów użytych arkuszy (przycięte do maxY)
+                for sheet in sheets:
+                    sheet_cost = float(sheet.get('used_sheet_cost', 0) or sheet.get('sheet_cost', 0) or 0)
+                    if sheet_cost > 0:
+                        total_sheet_cost += sheet_cost
+                logger.info(f"[Alokacja Proporcjonalna] Koszt arkuszy z nestingu: {total_sheet_cost:.2f}")
+
+        # Fallback do sumy bazowych kosztów materiału (gdy brak nestingu)
+        if total_sheet_cost <= 0:
+            total_sheet_cost = sum(float(p.get('base_material_cost', 0) or 0) for p in non_manual_parts)
+            logger.info(f"[Alokacja Proporcjonalna] Fallback do bbox: {total_sheet_cost:.2f}")
+
+        # Oblicz sumę contour_area (lub bbox jeśli brak contour_area)
+        total_contour_area = 0.0
+        for part in non_manual_parts:
+            area = float(part.get('contour_area', 0) or part.get('area_gross_mm2', 0) or 0)
+            if area <= 0:
+                # Fallback do bbox
+                w = float(part.get('width', 0) or 0)
+                h = float(part.get('height', 0) or 0)
+                area = w * h
+            total_contour_area += area
+
+        logger.info(f"[Alokacja Proporcjonalna] Suma contour_area: {total_contour_area:.0f} mm², "
+                   f"Koszt arkuszy: {total_sheet_cost:.2f} PLN")
+
+        # Przypisz proporcjonalnie do contour_area
+        for part in self.parts_data:
+            if not part.get('_manual_lm_cost', False):
+                area = float(part.get('contour_area', 0) or part.get('area_gross_mm2', 0) or 0)
+                if area <= 0:
+                    w = float(part.get('width', 0) or 0)
+                    h = float(part.get('height', 0) or 0)
+                    area = w * h
+
+                share = area / total_contour_area if total_contour_area > 0 else 0
+                part['material_cost'] = total_sheet_cost * share
+
+                part['lm_cost'] = (part['material_cost'] +
+                                  float(part.get('cutting_cost', 0) or 0) +
+                                  float(part.get('engraving_cost', 0) or 0) +
+                                  float(part.get('foil_cost', 0) or 0) +
+                                  float(part.get('piercing_cost', 0) or 0))
+
+            lm_cost = float(part.get('lm_cost', 0) or 0)
+            bending_cost = float(part.get('bending_cost', 0) or 0)
+            additional = float(part.get('additional', 0) or 0)
+            part['total_unit'] = lm_cost + bending_cost + additional
+
+    def _apply_equal_allocation(self):
+        """Równy podział: koszt arkuszy z nestingu dzielony równo między detale.
 
         WAŻNE: Tylko material_cost jest dzielony równo.
         Koszty cięcia, graweru i folii pozostają STAŁE (zależą od geometrii).
@@ -1173,10 +1254,8 @@ class DetailedPartsPanel(ctk.CTkFrame):
         if not self.parts_data:
             return
 
-        # Oblicz sumę kosztów MATERIAŁU tylko dla nie-manualnych detali
         non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
         if not non_manual_parts:
-            # Wszystkie są manualne - tylko aktualizuj total
             for part in self.parts_data:
                 lm_cost = float(part.get('lm_cost', 0) or 0)
                 bending_cost = float(part.get('bending_cost', 0) or 0)
@@ -1184,79 +1263,32 @@ class DetailedPartsPanel(ctk.CTkFrame):
                 part['total_unit'] = lm_cost + bending_cost + additional
             return
 
-        # Suma kosztów MATERIAŁU (nie całego L+M!)
-        total_material = sum(float(p.get('material_cost', 0) or 0) for p in non_manual_parts)
-        num_parts = len(non_manual_parts)
-        equal_material = total_material / num_parts if num_parts > 0 else 0
-
-        logger.info(f"[Alokacja Jednostkowa] Suma materiału: {total_material:.2f}, "
-                   f"Detali: {num_parts}, Mat/detal: {equal_material:.2f}")
-
-        for part in self.parts_data:
-            # Nie zmieniaj manualnych wartości L+M
-            if not part.get('_manual_lm_cost', False):
-                # Zmień TYLKO koszt materiału - reszta pozostaje stała
-                part['material_cost'] = equal_material
-                # Przelicz L+M jako sumę składników (cięcie, grawer, folia, piercing pozostają bez zmian)
-                part['lm_cost'] = (part['material_cost'] +
-                                  float(part.get('cutting_cost', 0) or 0) +
-                                  float(part.get('engraving_cost', 0) or 0) +
-                                  float(part.get('foil_cost', 0) or 0) +
-                                  float(part.get('piercing_cost', 0) or 0))
-
-            lm_cost = float(part.get('lm_cost', 0) or 0)
-            bending_cost = float(part.get('bending_cost', 0) or 0)
-            additional = float(part.get('additional', 0) or 0)
-            part['total_unit'] = lm_cost + bending_cost + additional
-
-    def _apply_per_sheet_allocation(self):
-        """Na arkusz: koszt arkusza podzielony równo między detale.
-
-        WAŻNE: Tylko material_cost jest modyfikowany.
-        Koszty cięcia, graweru, folii i piercingu pozostają STAŁE (zależą od geometrii).
-
-        Logika: Suma kosztów materiału (lub koszt arkusza z nestingu) dzielona
-        równo między wszystkie detale.
-        """
-        if not self.parts_data:
-            return
-
-        non_manual_parts = [p for p in self.parts_data if not p.get('_manual_lm_cost', False)]
-        if not non_manual_parts:
-            # Wszystkie są manualne - tylko aktualizuj total
-            for part in self.parts_data:
-                lm_cost = float(part.get('lm_cost', 0) or 0)
-                bending_cost = float(part.get('bending_cost', 0) or 0)
-                additional = float(part.get('additional', 0) or 0)
-                part['total_unit'] = lm_cost + bending_cost + additional
-            return
-
-        # Oblicz całkowity koszt materiału (bounding boxes)
-        total_sheet_cost = sum(float(p.get('base_material_cost', 0) or 0) for p in non_manual_parts)
-
-        # Jeśli mamy wyniki nestingu z kosztem arkuszy - użyj ich
+        # Pobierz koszt arkuszy z nestingu
+        total_sheet_cost = 0.0
         if hasattr(self, 'nesting_results') and self.nesting_results:
             sheets = self.nesting_results.get('sheets', [])
             if sheets:
-                # Suma kosztów wszystkich użytych arkuszy
-                sheet_costs = sum(float(s.get('sheet_cost', 0) or 0) for s in sheets)
-                if sheet_costs > 0:
-                    total_sheet_cost = sheet_costs
-                    logger.info(f"[Alokacja Na Arkusz] Używam kosztów arkuszy z nestingu: {total_sheet_cost:.2f}")
+                for sheet in sheets:
+                    sheet_cost = float(sheet.get('used_sheet_cost', 0) or sheet.get('sheet_cost', 0) or 0)
+                    if sheet_cost > 0:
+                        total_sheet_cost += sheet_cost
+                logger.info(f"[Alokacja Równy] Koszt arkuszy z nestingu: {total_sheet_cost:.2f}")
+
+        # Fallback do sumy bazowych kosztów materiału
+        if total_sheet_cost <= 0:
+            total_sheet_cost = sum(float(p.get('base_material_cost', 0) or 0) for p in non_manual_parts)
+            logger.info(f"[Alokacja Równy] Fallback do bbox: {total_sheet_cost:.2f}")
 
         # Podziel równo na wszystkie nie-manualne detale
         num_parts = len(non_manual_parts)
         equal_material = total_sheet_cost / num_parts if num_parts > 0 else 0
 
-        logger.info(f"[Alokacja Na Arkusz] Koszt arkuszy: {total_sheet_cost:.2f}, "
+        logger.info(f"[Alokacja Równy] Koszt arkuszy: {total_sheet_cost:.2f}, "
                    f"Detali: {num_parts}, Mat/detal: {equal_material:.2f}")
 
         for part in self.parts_data:
-            # Nie zmieniaj manualnych wartości L+M
             if not part.get('_manual_lm_cost', False):
-                # Zmień TYLKO koszt materiału - reszta pozostaje stała
                 part['material_cost'] = equal_material
-                # Przelicz L+M jako sumę składników (cięcie, grawer, folia, piercing pozostają bez zmian)
                 part['lm_cost'] = (part['material_cost'] +
                                   float(part.get('cutting_cost', 0) or 0) +
                                   float(part.get('engraving_cost', 0) or 0) +
@@ -1267,6 +1299,15 @@ class DetailedPartsPanel(ctk.CTkFrame):
             bending_cost = float(part.get('bending_cost', 0) or 0)
             additional = float(part.get('additional', 0) or 0)
             part['total_unit'] = lm_cost + bending_cost + additional
+
+    # Aliasy dla kompatybilności wstecznej
+    def _apply_unit_allocation(self):
+        """Alias dla _apply_equal_allocation (kompatybilność wsteczna)"""
+        return self._apply_equal_allocation()
+
+    def _apply_per_sheet_allocation(self):
+        """Alias dla _apply_equal_allocation (kompatybilność wsteczna)"""
+        return self._apply_equal_allocation()
 
     def _update_row(self, idx: int):
         """Aktualizuj wiersz w tabeli"""
