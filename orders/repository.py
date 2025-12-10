@@ -299,6 +299,30 @@ class OrderRepository:
 
             return False
 
+    def update_status(self, order_id: str, new_status: str) -> bool:
+        """Zmień status zamówienia"""
+        try:
+            # Waliduj status
+            valid_statuses = ['RECEIVED', 'IN_PROGRESS', 'COMPLETED', 'SHIPPED', 'CANCELLED']
+            if new_status not in valid_statuses:
+                logger.warning(f"[OrderRepository] Invalid status: {new_status}")
+                return False
+
+            response = self.client.table('orders').update({
+                'status': new_status,
+                'updated_at': datetime.now().isoformat()
+            }).eq('id', order_id).execute()
+
+            if response.data:
+                logger.info(f"[OrderRepository] Order {order_id} status changed to {new_status}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"[OrderRepository] Error updating status for {order_id}: {e}")
+            return False
+
     def delete(self, order_id: str) -> bool:
         """Usuń zamówienie"""
         try:

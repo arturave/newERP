@@ -679,13 +679,13 @@ class MainDashboard(ctk.CTk):
         table_frame = ctk.CTkFrame(main_frame, fg_color=Theme.BG_INPUT)
         table_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
-        # Style
+        # Style - biały tekst w liście zamówień
         style = ttk.Style()
         style.theme_use('clam')
         style.configure(
             "Orders.Treeview",
             background=Theme.BG_INPUT,
-            foreground=Theme.TEXT_PRIMARY,
+            foreground="white",  # Biały kolor tekstu
             fieldbackground=Theme.BG_INPUT,
             rowheight=35,
             font=('Segoe UI', 10)
@@ -693,7 +693,7 @@ class MainDashboard(ctk.CTk):
         style.configure(
             "Orders.Treeview.Heading",
             background="#1e3a5f",
-            foreground=Theme.TEXT_PRIMARY,
+            foreground="white",  # Biały kolor nagłówków
             font=('Segoe UI', 10, 'bold'),
             relief="flat"
         )
@@ -1150,9 +1150,182 @@ Moduły:
         order_win.after(100, lambda: order_win.attributes('-topmost', False))
 
     def _show_context_menu(self, event):
-        """Pokaż menu kontekstowe"""
-        # TODO: Menu kontekstowe dla zamówienia
-        pass
+        """Pokaż menu kontekstowe dla zamówienia"""
+        # Zaznacz wiersz pod kursorem
+        item = self.orders_tree.identify_row(event.y)
+        if item:
+            self.orders_tree.selection_set(item)
+
+        # Utwórz menu kontekstowe
+        menu = tk.Menu(self, tearoff=0, bg=Theme.BG_CARD, fg="white",
+                      activebackground=Theme.ACCENT_PRIMARY, activeforeground="white",
+                      font=('Segoe UI', 10))
+
+        # Nowe zamówienie
+        menu.add_command(label="➕ Nowe zamówienie", command=self._open_new_order)
+        menu.add_separator()
+
+        # Opcje wymagające zaznaczenia
+        if item:
+            menu.add_command(label="📝 Edytuj", command=lambda: self._edit_order(item))
+            menu.add_command(label="📋 Duplikuj", command=lambda: self._duplicate_order(item))
+            menu.add_separator()
+
+            # Podmenu "Oznacz jako"
+            status_menu = tk.Menu(menu, tearoff=0, bg=Theme.BG_CARD, fg="white",
+                                 activebackground=Theme.ACCENT_PRIMARY, activeforeground="white",
+                                 font=('Segoe UI', 10))
+            status_menu.add_command(label="📥 Otrzymane (RECEIVED)",
+                                   command=lambda: self._change_order_status(item, 'RECEIVED'))
+            status_menu.add_command(label="⏳ W trakcie (IN_PROGRESS)",
+                                   command=lambda: self._change_order_status(item, 'IN_PROGRESS'))
+            status_menu.add_command(label="✅ Zakończone (COMPLETED)",
+                                   command=lambda: self._change_order_status(item, 'COMPLETED'))
+            status_menu.add_command(label="📦 Wysłane (SHIPPED)",
+                                   command=lambda: self._change_order_status(item, 'SHIPPED'))
+            status_menu.add_command(label="❌ Anulowane (CANCELLED)",
+                                   command=lambda: self._change_order_status(item, 'CANCELLED'))
+            menu.add_cascade(label="🏷️ Oznacz jako", menu=status_menu)
+
+            menu.add_separator()
+            menu.add_command(label="🗑️ Usuń", command=lambda: self._delete_order(item),
+                           foreground=Theme.ACCENT_DANGER)
+        else:
+            # Opcje gdy brak zaznaczenia
+            menu.add_command(label="📝 Edytuj", state="disabled")
+            menu.add_command(label="📋 Duplikuj", state="disabled")
+            menu.add_command(label="🏷️ Oznacz jako", state="disabled")
+            menu.add_separator()
+            menu.add_command(label="🗑️ Usuń", state="disabled")
+
+        menu.add_separator()
+        menu.add_command(label="🔄 Odśwież listę", command=self._load_data)
+
+        # Pokaż menu
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _edit_order(self, item):
+        """Edytuj zamówienie (otwórz w oknie)"""
+        self._on_order_double_click(None)
+
+    def _duplicate_order(self, item):
+        """Duplikuj zamówienie"""
+        selection = self.orders_tree.selection()
+        if not selection:
+            return
+
+        # Pobierz dane zamówienia
+        values = self.orders_tree.item(selection[0], 'values')
+        order_id = self.orders_tree.item(selection[0], 'tags')
+
+        if order_id:
+            order_id = order_id[0] if order_id else None
+
+        try:
+            from orders.repository import OrderRepository
+            from core.supabase_client import get_supabase_client
+            import uuid
+
+            client = get_supabase_client()
+            repo = OrderRepository(client)
+
+            # Pobierz oryginalne zamówienie
+            if order_id:
+                original = repo.get_by_id(order_id)
+                if original:
+                    # Stwórz kopię z nowym ID i nazwą
+                    new_order = original.copy()
+                    new_order['id'] = str(uuid.uuid4())
+                    new_order['name'] = f"{original.get('name', 'Zamówienie')} (kopia)"
+                    new_order['title'] = new_order['name']
+                    new_order['status'] = 'RECEIVED'
+
+                    # Zapisz kopię
+                    saved = repo.save(new_order)
+                    if saved:
+                        messagebox.showinfo("Sukces", f"Utworzono kopię: {new_order['name']}")
+                        self._load_data()
+                        return
+
+            messagebox.showerror("Błąd", "Nie można zduplikować zamówienia")
+
+        except Exception as e:
+            logger.error(f"[MainDashboard] Error duplicating order: {e}")
+            messagebox.showerror("Błąd", f"Błąd duplikowania: {e}")
+
+    def _change_order_status(self, item, new_status: str):
+        """Zmień status zamówienia"""
+        selection = self.orders_tree.selection()
+        if not selection:
+            return
+
+        order_id = self.orders_tree.item(selection[0], 'tags')
+        if order_id:
+            order_id = order_id[0] if order_id else None
+
+        try:
+            from orders.repository import OrderRepository
+            from core.supabase_client import get_supabase_client
+
+            client = get_supabase_client()
+            repo = OrderRepository(client)
+
+            if order_id:
+                # Aktualizuj status
+                success = repo.update_status(order_id, new_status)
+                if success:
+                    logger.info(f"[MainDashboard] Order {order_id} status changed to {new_status}")
+                    self._load_data()
+                    return
+
+            messagebox.showerror("Błąd", "Nie można zmienić statusu")
+
+        except Exception as e:
+            logger.error(f"[MainDashboard] Error changing status: {e}")
+            messagebox.showerror("Błąd", f"Błąd zmiany statusu: {e}")
+
+    def _delete_order(self, item):
+        """Usuń zamówienie"""
+        selection = self.orders_tree.selection()
+        if not selection:
+            return
+
+        values = self.orders_tree.item(selection[0], 'values')
+        order_name = values[3] if len(values) > 3 else "zamówienie"
+
+        # Potwierdzenie
+        if not messagebox.askyesno("Potwierdź usunięcie",
+                                   f"Czy na pewno chcesz usunąć zamówienie:\n\n{order_name}?\n\n"
+                                   "Ta operacja jest nieodwracalna."):
+            return
+
+        order_id = self.orders_tree.item(selection[0], 'tags')
+        if order_id:
+            order_id = order_id[0] if order_id else None
+
+        try:
+            from orders.repository import OrderRepository
+            from core.supabase_client import get_supabase_client
+
+            client = get_supabase_client()
+            repo = OrderRepository(client)
+
+            if order_id:
+                success = repo.delete(order_id)
+                if success:
+                    logger.info(f"[MainDashboard] Order {order_id} deleted")
+                    messagebox.showinfo("Sukces", f"Zamówienie '{order_name}' zostało usunięte")
+                    self._load_data()
+                    return
+
+            messagebox.showerror("Błąd", "Nie można usunąć zamówienia")
+
+        except Exception as e:
+            logger.error(f"[MainDashboard] Error deleting order: {e}")
+            messagebox.showerror("Błąd", f"Błąd usuwania: {e}")
 
     def _export(self, format_type: str):
         """Eksportuj dane"""
