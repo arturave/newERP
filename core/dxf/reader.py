@@ -94,23 +94,71 @@ class UnifiedDXFReader:
             # Dodaj feature ARCs do outer entities
             outer_entities.extend(feature_entities)
 
-            # Zbuduj kontur zewnętrzny
-            outer_contour, _ = build_contours_from_entities(
-                outer_entities, self.contour_tolerance
-            )
+            # Oddziel CIRCLES od innych entities (CIRCLES to potencjalne otwory)
+            line_arc_entities = [
+                e for e in outer_entities
+                if e.entity_type != EntityType.CIRCLE
+            ]
+            circle_entities = [
+                e for e in outer_entities
+                if e.entity_type == EntityType.CIRCLE
+            ]
 
-            # Zbuduj otwory
+            # Dodaj CIRCLES z inner_entities
+            circle_entities.extend([
+                e for e in inner_entities
+                if e.entity_type == EntityType.CIRCLE
+            ])
+            # Inne inner entities (nie CIRCLE)
+            other_inner_entities = [
+                e for e in inner_entities
+                if e.entity_type != EntityType.CIRCLE
+            ]
+
+            # Zbuduj kontur zewnętrzny z LINE/ARC/POLYLINE (nie CIRCLE)
+            outer_contour = None
+            if line_arc_entities:
+                outer_contour, _ = build_contours_from_entities(
+                    line_arc_entities, self.contour_tolerance
+                )
+
+            # Jeśli brak konturu z LINE/ARC, użyj największego CIRCLE
+            if not outer_contour or len(outer_contour.points) < 3:
+                if circle_entities:
+                    largest_circle = max(
+                        circle_entities,
+                        key=lambda c: c.raw_data.get('radius', 0)
+                    )
+                    outer_contour = DXFContour(
+                        points=largest_circle.points,
+                        entities=[largest_circle],
+                        is_closed=True,
+                        is_outer=True,
+                        layer=largest_circle.layer
+                    )
+                    # Usuń największy okrąg z listy otworów
+                    circle_entities = [
+                        c for c in circle_entities if c is not largest_circle
+                    ]
+
+            # Zbuduj otwory z pozostałych CIRCLES
             holes = []
-            if inner_entities:
-                inner_contours = self._contour_builder.build_contours(inner_entities)
+            for circle_entity in circle_entities:
+                hole_contour = DXFContour(
+                    points=circle_entity.points,
+                    entities=[circle_entity],
+                    is_closed=True,
+                    is_outer=False,
+                    layer=circle_entity.layer
+                )
+                holes.append(hole_contour)
+
+            # Zbuduj otwory z innych inner entities (np. zamknięte POLYLINE)
+            if other_inner_entities:
+                inner_contours = self._contour_builder.build_contours(other_inner_entities)
                 for contour in inner_contours:
                     contour.is_outer = False
                     holes.append(contour)
-
-            # Sprawdź czy największy CIRCLE powinien być konturem zewnętrznym
-            outer_contour = self._check_circle_as_outer(
-                outer_contour, layer_entities
-            )
 
             if not outer_contour or len(outer_contour.points) < 3:
                 logger.warning(f"Could not build contour from {filepath}")
@@ -209,7 +257,14 @@ class UnifiedDXFReader:
     def _find_outer_entities(
         self, layer_entities: Dict[str, List[DXFEntity]]
     ) -> List[DXFEntity]:
-        """Znajdź entities należące do konturu zewnętrznego"""
+        """
+        Znajdź entities należące do konturu zewnętrznego.
+
+        Strategia:
+        1. Jeśli są dedykowane warstwy outer - użyj ich
+        2. W przeciwnym razie użyj LINE, ARC, POLYLINE (nie CIRCLE)
+           - CIRCLE są traktowane jako otwory lub specjalny przypadek
+        """
         outer_entities: List[DXFEntity] = []
 
         # Posortuj warstwy według priorytetu
@@ -236,7 +291,7 @@ class UnifiedDXFReader:
                     logger.debug(f"Using outer layer: {layer} ({len(geometry)} entities)")
                     break
 
-        # Jeśli nie znaleziono, użyj wszystkich nie-ignorowanych, nie-inner warstw
+        # Jeśli nie znaleziono, użyj LINE/ARC/POLYLINE (nie CIRCLE - one idą do otworów)
         if not outer_entities:
             for layer, entities in layer_entities.items():
                 if not is_inner_layer(layer) and not is_feature_layer(layer):
@@ -255,16 +310,30 @@ class UnifiedDXFReader:
     def _find_inner_entities(
         self, layer_entities: Dict[str, List[DXFEntity]]
     ) -> List[DXFEntity]:
-        """Znajdź entities należące do otworów"""
+        """
+        Znajdź entities należące do otworów.
+
+        Strategia:
+        1. Jeśli są dedykowane warstwy inner - użyj ich
+        2. CIRCLES na dowolnej warstwie (nie-outer) traktuj jako potencjalne otwory
+           - Mniejsze CIRCLES = otwory
+           - Największy CIRCLE może być konturem zewnętrznym (obsługiwane w _check_circle_as_outer)
+        """
         inner_entities: List[DXFEntity] = []
+        has_inner_layer = any(is_inner_layer(layer) for layer in layer_entities.keys())
 
         for layer, entities in layer_entities.items():
             if is_inner_layer(layer):
-                # Wszystkie CIRCLE i zamknięte figury to otwory
+                # Dedykowana warstwa inner - wszystko to otwory
                 for entity in entities:
                     if entity.entity_type == EntityType.CIRCLE:
                         inner_entities.append(entity)
                     elif entity.is_closed:
+                        inner_entities.append(entity)
+            elif not has_inner_layer and not is_outer_layer(layer):
+                # Brak dedykowanych warstw inner - traktuj CIRCLES jako otwory
+                for entity in entities:
+                    if entity.entity_type == EntityType.CIRCLE:
                         inner_entities.append(entity)
 
         return inner_entities
