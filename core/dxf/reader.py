@@ -94,71 +94,55 @@ class UnifiedDXFReader:
             # Dodaj feature ARCs do outer entities
             outer_entities.extend(feature_entities)
 
-            # Oddziel CIRCLES od innych entities (CIRCLES to potencjalne otwory)
-            line_arc_entities = [
-                e for e in outer_entities
-                if e.entity_type != EntityType.CIRCLE
-            ]
-            circle_entities = [
-                e for e in outer_entities
-                if e.entity_type == EntityType.CIRCLE
-            ]
+            # Zbierz wszystkie entities do analizy
+            all_outer = outer_entities + inner_entities
 
-            # Dodaj CIRCLES z inner_entities
-            circle_entities.extend([
-                e for e in inner_entities
-                if e.entity_type == EntityType.CIRCLE
-            ])
-            # Inne inner entities (nie CIRCLE)
-            other_inner_entities = [
-                e for e in inner_entities
-                if e.entity_type != EntityType.CIRCLE
-            ]
+            # Rozdziel na: zamknięte figury (CIRCLE, zamknięty POLYLINE) vs otwarte segmenty (LINE, ARC)
+            closed_entities = []
+            open_entities = []
 
-            # Zbuduj kontur zewnętrzny z LINE/ARC/POLYLINE (nie CIRCLE)
-            outer_contour = None
-            if line_arc_entities:
-                outer_contour, _ = build_contours_from_entities(
-                    line_arc_entities, self.contour_tolerance
-                )
+            for entity in all_outer:
+                if entity.entity_type == EntityType.CIRCLE:
+                    closed_entities.append(entity)
+                elif entity.entity_type in (EntityType.LWPOLYLINE, EntityType.POLYLINE):
+                    if entity.is_closed:
+                        closed_entities.append(entity)
+                    else:
+                        open_entities.append(entity)
+                elif entity.entity_type in (EntityType.LINE, EntityType.ARC, EntityType.SPLINE, EntityType.ELLIPSE):
+                    open_entities.append(entity)
 
-            # Jeśli brak konturu z LINE/ARC, użyj największego CIRCLE
-            if not outer_contour or len(outer_contour.points) < 3:
-                if circle_entities:
-                    largest_circle = max(
-                        circle_entities,
-                        key=lambda c: c.raw_data.get('radius', 0)
-                    )
-                    outer_contour = DXFContour(
-                        points=largest_circle.points,
-                        entities=[largest_circle],
-                        is_closed=True,
-                        is_outer=True,
-                        layer=largest_circle.layer
-                    )
-                    # Usuń największy okrąg z listy otworów
-                    circle_entities = [
-                        c for c in circle_entities if c is not largest_circle
-                    ]
+            # Zbuduj kontury z otwartych segmentów (LINE+ARC)
+            all_contours = []
+            if open_entities:
+                built_contours = self._contour_builder.build_contours(open_entities)
+                all_contours.extend(built_contours)
 
-            # Zbuduj otwory z pozostałych CIRCLES
-            holes = []
-            for circle_entity in circle_entities:
-                hole_contour = DXFContour(
-                    points=circle_entity.points,
-                    entities=[circle_entity],
+            # Dodaj zamknięte figury jako osobne kontury
+            for entity in closed_entities:
+                contour = DXFContour(
+                    points=list(entity.points),
+                    entities=[entity],
                     is_closed=True,
-                    is_outer=False,
-                    layer=circle_entity.layer
+                    layer=entity.layer
                 )
-                holes.append(hole_contour)
+                all_contours.append(contour)
 
-            # Zbuduj otwory z innych inner entities (np. zamknięte POLYLINE)
-            if other_inner_entities:
-                inner_contours = self._contour_builder.build_contours(other_inner_entities)
-                for contour in inner_contours:
-                    contour.is_outer = False
-                    holes.append(contour)
+            # Znajdź największy kontur jako zewnętrzny
+            if not all_contours:
+                logger.warning(f"No contours found in {filepath}")
+                return None
+
+            # Sortuj po polu (malejąco) - największy to outer, reszta to holes
+            all_contours.sort(key=lambda c: c.area, reverse=True)
+
+            outer_contour = all_contours[0]
+            outer_contour.is_outer = True
+
+            holes = []
+            for contour in all_contours[1:]:
+                contour.is_outer = False
+                holes.append(contour)
 
             if not outer_contour or len(outer_contour.points) < 3:
                 logger.warning(f"Could not build contour from {filepath}")
