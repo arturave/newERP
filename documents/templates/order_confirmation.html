@@ -1,0 +1,530 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .confirmation-banner {
+        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 25px;
+        text-align: center;
+    }
+
+    .confirmation-banner h2 {
+        margin: 0 0 10px 0;
+        font-size: 18pt;
+    }
+
+    .confirmation-banner p {
+        margin: 0;
+        opacity: 0.9;
+        font-size: 10pt;
+    }
+
+    .order-info-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-bottom: 25px;
+    }
+
+    .info-card {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 15px;
+    }
+
+    .info-card h4 {
+        margin: 0 0 12px 0;
+        font-size: 10pt;
+        color: #6b7280;
+        text-transform: uppercase;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 8px;
+    }
+
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        font-size: 9pt;
+    }
+
+    .info-label {
+        color: #6b7280;
+    }
+
+    .info-value {
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 9pt;
+    }
+
+    .items-table th {
+        background: #059669;
+        color: white;
+        padding: 10px 8px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 8pt;
+        text-transform: uppercase;
+    }
+
+    .items-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid #e5e7eb;
+        vertical-align: middle;
+    }
+
+    .items-table tr:nth-child(even) {
+        background: #f9fafb;
+    }
+
+    .thumbnail-cell {
+        width: 80px;
+        text-align: center;
+        padding: 5px !important;
+    }
+
+    .thumbnail-img {
+        max-width: 70px;
+        max-height: 55px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        background: #1f2937;
+    }
+
+    .thumbnail-placeholder {
+        width: 70px;
+        height: 55px;
+        background: #f3f4f6;
+        border: 1px dashed #d1d5db;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 7pt;
+        color: #9ca3af;
+    }
+
+    .part-name {
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .part-code {
+        font-size: 8pt;
+        color: #6b7280;
+        margin-top: 2px;
+    }
+
+    .material-tag {
+        display: inline-block;
+        background: #d1fae5;
+        color: #065f46;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 8pt;
+        font-weight: 500;
+    }
+
+    .qty-cell {
+        font-weight: bold;
+        font-size: 11pt;
+        color: #059669;
+        text-align: center;
+    }
+
+    .price-cell {
+        text-align: right;
+        font-weight: 500;
+    }
+
+    .material-header {
+        background: #d1fae5 !important;
+    }
+
+    .material-header td {
+        font-weight: bold;
+        color: #065f46;
+        padding: 8px 10px !important;
+        font-size: 9pt;
+        border-bottom: 2px solid #34d399 !important;
+    }
+
+    .totals-section {
+        margin-top: 20px;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .totals-table {
+        width: 300px;
+        border-collapse: collapse;
+    }
+
+    .totals-table td {
+        padding: 8px 12px;
+        font-size: 10pt;
+    }
+
+    .totals-table tr:last-child {
+        background: #059669;
+        color: white;
+        font-weight: bold;
+        font-size: 12pt;
+    }
+
+    .totals-table tr:last-child td {
+        padding: 12px;
+    }
+
+    .terms-section {
+        margin-top: 30px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 20px;
+    }
+
+    .terms-section h4 {
+        margin: 0 0 15px 0;
+        font-size: 11pt;
+        color: #374151;
+    }
+
+    .terms-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
+    }
+
+    .term-item {
+        display: flex;
+        gap: 10px;
+        font-size: 9pt;
+    }
+
+    .term-icon {
+        width: 20px;
+        height: 20px;
+        background: #d1fae5;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10pt;
+        flex-shrink: 0;
+    }
+
+    .term-content {
+        flex: 1;
+    }
+
+    .term-label {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 2px;
+    }
+
+    .term-value {
+        color: #6b7280;
+    }
+
+    .acceptance-section {
+        margin-top: 30px;
+        border: 2px solid #059669;
+        border-radius: 8px;
+        padding: 20px;
+    }
+
+    .acceptance-section h4 {
+        margin: 0 0 15px 0;
+        color: #059669;
+        font-size: 11pt;
+    }
+
+    .acceptance-text {
+        font-size: 9pt;
+        color: #374151;
+        margin-bottom: 20px;
+        line-height: 1.5;
+    }
+
+    .signature-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+    }
+
+    .signature-box {
+        text-align: center;
+    }
+
+    .signature-line {
+        border-top: 1px solid #374151;
+        margin-top: 50px;
+        padding-top: 8px;
+    }
+
+    .signature-label {
+        font-size: 9pt;
+        color: #6b7280;
+    }
+
+    .highlight-box {
+        background: #fef3c7;
+        border: 1px solid #fcd34d;
+        border-radius: 6px;
+        padding: 12px 15px;
+        margin: 15px 0;
+        font-size: 9pt;
+    }
+
+    .highlight-box strong {
+        color: #92400e;
+    }
+</style>
+
+<div class="confirmation-banner">
+    <h2>Potwierdzenie przyjecia zamowienia</h2>
+    <p>Dziekujemy za zlozenie zamowienia. Ponizej przedstawiamy szczegoly zamowienia do akceptacji.</p>
+</div>
+
+<div class="order-info-grid">
+    <div class="info-card">
+        <h4>Dane zamowienia</h4>
+        <div class="info-row">
+            <span class="info-label">Numer zamowienia:</span>
+            <span class="info-value">{{ extra_data.order_number or doc_number }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Data zamowienia:</span>
+            <span class="info-value">{{ issue_date }}</span>
+        </div>
+        {% if extra_data.reference_number %}
+        <div class="info-row">
+            <span class="info-label">Nr referencyjny klienta:</span>
+            <span class="info-value">{{ extra_data.reference_number }}</span>
+        </div>
+        {% endif %}
+        {% if extra_data.quotation_number %}
+        <div class="info-row">
+            <span class="info-label">Nr oferty:</span>
+            <span class="info-value">{{ extra_data.quotation_number }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="info-card">
+        <h4>Terminy realizacji</h4>
+        {% if extra_data.production_deadline %}
+        <div class="info-row">
+            <span class="info-label">Termin produkcji:</span>
+            <span class="info-value">{{ extra_data.production_deadline }}</span>
+        </div>
+        {% endif %}
+        {% if extra_data.delivery_date %}
+        <div class="info-row">
+            <span class="info-label">Planowana dostawa:</span>
+            <span class="info-value">{{ extra_data.delivery_date }}</span>
+        </div>
+        {% endif %}
+        {% if extra_data.lead_time %}
+        <div class="info-row">
+            <span class="info-label">Czas realizacji:</span>
+            <span class="info-value">{{ extra_data.lead_time }}</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if extra_data.priority_note %}
+<div class="highlight-box">
+    <strong>Uwaga:</strong> {{ extra_data.priority_note }}
+</div>
+{% endif %}
+
+<h3 style="margin: 20px 0 15px 0; font-size: 12pt; color: #374151;">Specyfikacja zamowienia</h3>
+
+<table class="items-table">
+    <thead>
+        <tr>
+            <th style="width: 4%;">Lp</th>
+            <th style="width: 12%;">Podglad</th>
+            <th style="width: 28%;">Nazwa detalu</th>
+            <th style="width: 12%;">Material</th>
+            <th style="width: 10%;">Wymiary</th>
+            <th style="width: 8%;">Ilosc</th>
+            <th style="width: 13%;">Cena jedn.</th>
+            <th style="width: 13%;">Wartosc</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% set current_material = namespace(value='') %}
+        {% for item in items %}
+            {# Naglowek grupy materialowej #}
+            {% if item.material and item.material != current_material.value %}
+                {% set current_material.value = item.material %}
+                <tr class="material-header">
+                    <td colspan="8">
+                        Material: {{ item.material }}{% if item.thickness_mm %}, Grubosc: {{ item.thickness_mm }} mm{% endif %}
+                    </td>
+                </tr>
+            {% endif %}
+
+            <tr>
+                <td class="text-center">{{ loop.index }}</td>
+                <td class="thumbnail-cell">
+                    {% if item.thumbnail_base64 %}
+                        <img src="data:image/png;base64,{{ item.thumbnail_base64 }}"
+                             class="thumbnail-img"
+                             alt="{{ item.name }}">
+                    {% elif item.thumbnail_url %}
+                        <img src="{{ item.thumbnail_url }}"
+                             class="thumbnail-img"
+                             alt="{{ item.name }}">
+                    {% else %}
+                        <div class="thumbnail-placeholder">-</div>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="part-name">{{ item.name }}</div>
+                    {% if item.product_code %}
+                    <div class="part-code">{{ item.product_code }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if item.material %}
+                        <span class="material-tag">{{ item.material }}</span>
+                        {% if item.thickness_mm %}<br><small>{{ item.thickness_mm }} mm</small>{% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="text-center" style="font-size: 8pt;">
+                    {% if item.width_mm and item.height_mm %}
+                        {{ "%.0f"|format(item.width_mm) }} x {{ "%.0f"|format(item.height_mm) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="qty-cell">{{ "%.0f"|format(item.quantity) }}</td>
+                <td class="price-cell">
+                    {% if item.price_net %}
+                        {{ "%.2f"|format(item.price_net) }} {{ currency }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="price-cell">
+                    {% if item.value_net %}
+                        {{ "%.2f"|format(item.value_net) }} {{ currency }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="totals-section">
+    <table class="totals-table">
+        <tr>
+            <td>Suma netto:</td>
+            <td class="text-right">{{ "%.2f"|format(total_net) }} {{ currency }}</td>
+        </tr>
+        <tr>
+            <td>VAT (23%):</td>
+            <td class="text-right">{{ "%.2f"|format(total_vat) }} {{ currency }}</td>
+        </tr>
+        <tr>
+            <td>Do zaplaty brutto:</td>
+            <td class="text-right">{{ "%.2f"|format(total_gross) }} {{ currency }}</td>
+        </tr>
+    </table>
+</div>
+
+<div class="terms-section">
+    <h4>Warunki realizacji zamowienia</h4>
+    <div class="terms-grid">
+        {% if extra_data.payment_terms %}
+        <div class="term-item">
+            <div class="term-icon">$</div>
+            <div class="term-content">
+                <div class="term-label">Warunki platnosci</div>
+                <div class="term-value">{{ extra_data.payment_terms }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if extra_data.delivery_terms %}
+        <div class="term-item">
+            <div class="term-icon">T</div>
+            <div class="term-content">
+                <div class="term-label">Warunki dostawy</div>
+                <div class="term-value">{{ extra_data.delivery_terms }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if extra_data.incoterms %}
+        <div class="term-item">
+            <div class="term-icon">I</div>
+            <div class="term-content">
+                <div class="term-label">Incoterms</div>
+                <div class="term-value">{{ extra_data.incoterms }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if extra_data.packaging %}
+        <div class="term-item">
+            <div class="term-icon">P</div>
+            <div class="term-content">
+                <div class="term-label">Opakowanie</div>
+                <div class="term-value">{{ extra_data.packaging }}</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="acceptance-section">
+    <h4>Akceptacja zamowienia</h4>
+    <div class="acceptance-text">
+        Prosimy o potwierdzenie zamowienia poprzez podpisanie i odeslanie niniejszego dokumentu.
+        Podpis oznacza akceptacje wszystkich warunkow zamowienia, w tym specyfikacji technicznej,
+        terminow realizacji oraz warunkow platnosci.
+    </div>
+
+    <div class="signature-grid">
+        <div class="signature-box">
+            <div class="signature-line">
+                <div class="signature-label">Podpis i pieczec wykonawcy</div>
+            </div>
+        </div>
+        <div class="signature-box">
+            <div class="signature-line">
+                <div class="signature-label">Podpis i pieczec zamawiajacego</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if notes %}
+<div class="notes-section" style="margin-top: 20px;">
+    <div class="notes-label">Uwagi dodatkowe:</div>
+    {{ notes }}
+</div>
+{% endif %}
+{% endblock %}

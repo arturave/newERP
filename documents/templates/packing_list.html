@@ -1,0 +1,496 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .packing-header {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+        color: white;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+
+    .packing-header h3 {
+        margin: 0 0 10px 0;
+        font-size: 14pt;
+    }
+
+    .packing-meta {
+        display: flex;
+        gap: 30px;
+        font-size: 10pt;
+    }
+
+    .packing-meta-item {
+        display: flex;
+        gap: 8px;
+    }
+
+    .packing-meta-label {
+        opacity: 0.8;
+    }
+
+    .packing-meta-value {
+        font-weight: bold;
+    }
+
+    .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+        font-size: 9pt;
+    }
+
+    .items-table th {
+        background: #4f46e5;
+        color: white;
+        padding: 10px 8px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 8pt;
+        text-transform: uppercase;
+    }
+
+    .items-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid #e5e7eb;
+        vertical-align: middle;
+    }
+
+    .items-table tr:nth-child(even) {
+        background: #f9fafb;
+    }
+
+    .thumbnail-cell {
+        width: 80px;
+        text-align: center;
+        padding: 5px !important;
+    }
+
+    .thumbnail-img {
+        max-width: 70px;
+        max-height: 55px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        background: #1f2937;
+    }
+
+    .thumbnail-placeholder {
+        width: 70px;
+        height: 55px;
+        background: #f3f4f6;
+        border: 1px dashed #d1d5db;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 7pt;
+        color: #9ca3af;
+    }
+
+    .part-name {
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .part-code {
+        font-size: 8pt;
+        color: #6b7280;
+        margin-top: 2px;
+    }
+
+    .material-tag {
+        display: inline-block;
+        background: #e0e7ff;
+        color: #4338ca;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 8pt;
+        font-weight: 500;
+    }
+
+    .qty-badge {
+        display: inline-block;
+        background: #dcfce7;
+        color: #166534;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-weight: bold;
+        font-size: 11pt;
+    }
+
+    .weight-value {
+        font-weight: 500;
+        text-align: right;
+    }
+
+    .dimension-cell {
+        font-size: 8pt;
+        color: #6b7280;
+        text-align: center;
+    }
+
+    .material-group-header {
+        background: #e0e7ff !important;
+    }
+
+    .material-group-header td {
+        font-weight: bold;
+        color: #4338ca;
+        padding: 8px 10px !important;
+        font-size: 9pt;
+        border-bottom: 2px solid #818cf8 !important;
+    }
+
+    .summary-section {
+        margin-top: 25px;
+        display: flex;
+        gap: 20px;
+    }
+
+    .summary-box {
+        flex: 1;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 15px;
+    }
+
+    .summary-box h4 {
+        margin: 0 0 10px 0;
+        font-size: 10pt;
+        color: #4b5563;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 8px;
+    }
+
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        font-size: 9pt;
+    }
+
+    .summary-label {
+        color: #6b7280;
+    }
+
+    .summary-value {
+        font-weight: bold;
+        color: #1f2937;
+    }
+
+    .summary-total {
+        background: #dcfce7;
+        margin: 10px -15px -15px;
+        padding: 12px 15px;
+        border-radius: 0 0 8px 8px;
+        font-weight: bold;
+        color: #166534;
+    }
+
+    .package-info {
+        margin-top: 25px;
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-radius: 8px;
+        padding: 15px;
+    }
+
+    .package-info h4 {
+        margin: 0 0 12px 0;
+        color: #c2410c;
+        font-size: 10pt;
+    }
+
+    .package-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+    }
+
+    .package-item {
+        text-align: center;
+    }
+
+    .package-item-label {
+        font-size: 8pt;
+        color: #9a3412;
+        margin-bottom: 4px;
+    }
+
+    .package-item-value {
+        font-weight: bold;
+        font-size: 14pt;
+        color: #c2410c;
+    }
+
+    .package-item-unit {
+        font-size: 8pt;
+        color: #9a3412;
+    }
+
+    .checklist {
+        margin-top: 25px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .checklist-header {
+        background: #f3f4f6;
+        padding: 10px 15px;
+        font-weight: bold;
+        font-size: 10pt;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .checklist-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 15px;
+        border-bottom: 1px solid #f3f4f6;
+        font-size: 9pt;
+    }
+
+    .checklist-item:last-child {
+        border-bottom: none;
+    }
+
+    .checkbox {
+        width: 16px;
+        height: 16px;
+        border: 2px solid #d1d5db;
+        border-radius: 3px;
+    }
+
+    .signature-section {
+        margin-top: 40px;
+        display: flex;
+        gap: 40px;
+    }
+
+    .signature-box {
+        flex: 1;
+        text-align: center;
+        padding-top: 50px;
+        border-top: 1px solid #000;
+    }
+
+    .signature-label {
+        font-size: 9pt;
+        color: #6b7280;
+        margin-top: 5px;
+    }
+</style>
+
+<div class="packing-header">
+    <h3>Lista Pakunkowa / Packing List</h3>
+    <div class="packing-meta">
+        {% if extra_data.order_number %}
+        <div class="packing-meta-item">
+            <span class="packing-meta-label">Nr zamowienia:</span>
+            <span class="packing-meta-value">{{ extra_data.order_number }}</span>
+        </div>
+        {% endif %}
+        {% if extra_data.shipment_number %}
+        <div class="packing-meta-item">
+            <span class="packing-meta-label">Nr wysylki:</span>
+            <span class="packing-meta-value">{{ extra_data.shipment_number }}</span>
+        </div>
+        {% endif %}
+        <div class="packing-meta-item">
+            <span class="packing-meta-label">Pozycji:</span>
+            <span class="packing-meta-value">{{ items | length }}</span>
+        </div>
+    </div>
+</div>
+
+<table class="items-table">
+    <thead>
+        <tr>
+            <th style="width: 4%;">Lp</th>
+            <th style="width: 12%;">Podglad</th>
+            <th style="width: 30%;">Nazwa detalu</th>
+            <th style="width: 14%;">Material</th>
+            <th style="width: 12%;">Wymiary [mm]</th>
+            <th style="width: 8%;">Ilosc</th>
+            <th style="width: 10%;">Waga jedn.</th>
+            <th style="width: 10%;">Waga calk.</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% set current_material = namespace(value='') %}
+        {% for item in items %}
+            {# Naglowek grupy materialowej #}
+            {% if item.material and item.material != current_material.value %}
+                {% set current_material.value = item.material %}
+                <tr class="material-group-header">
+                    <td colspan="8">
+                        Material: {{ item.material }}{% if item.thickness_mm %}, Grubosc: {{ item.thickness_mm }} mm{% endif %}
+                    </td>
+                </tr>
+            {% endif %}
+
+            <tr>
+                <td class="text-center">{{ loop.index }}</td>
+                <td class="thumbnail-cell">
+                    {% if item.thumbnail_base64 %}
+                        <img src="data:image/png;base64,{{ item.thumbnail_base64 }}"
+                             class="thumbnail-img"
+                             alt="{{ item.name }}">
+                    {% elif item.thumbnail_url %}
+                        <img src="{{ item.thumbnail_url }}"
+                             class="thumbnail-img"
+                             alt="{{ item.name }}">
+                    {% else %}
+                        <div class="thumbnail-placeholder">Brak<br>podgladu</div>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="part-name">{{ item.name }}</div>
+                    {% if item.product_code %}
+                    <div class="part-code">{{ item.product_code }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if item.material %}
+                        <span class="material-tag">{{ item.material }}</span>
+                        {% if item.thickness_mm %}<br><small>{{ item.thickness_mm }} mm</small>{% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="dimension-cell">
+                    {% if item.width_mm and item.height_mm %}
+                        {{ "%.0f"|format(item.width_mm) }} x {{ "%.0f"|format(item.height_mm) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    <span class="qty-badge">{{ "%.0f"|format(item.quantity) }}</span>
+                </td>
+                <td class="weight-value">
+                    {% if item.weight %}
+                        {{ "%.3f"|format(item.weight) }} kg
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="weight-value">
+                    {% if item.weight %}
+                        {{ "%.2f"|format(item.weight * item.quantity) }} kg
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="summary-section">
+    <div class="summary-box">
+        <h4>Podsumowanie ilosci</h4>
+        <div class="summary-row">
+            <span class="summary-label">Liczba pozycji:</span>
+            <span class="summary-value">{{ items | length }}</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">Liczba materialow:</span>
+            <span class="summary-value">
+                {% set materials = items | map(attribute='material') | select | unique | list %}
+                {{ materials | length }}
+            </span>
+        </div>
+        <div class="summary-total">
+            Lacznie sztuk: {{ items | sum(attribute='quantity') | int }}
+        </div>
+    </div>
+
+    <div class="summary-box">
+        <h4>Podsumowanie wagi</h4>
+        {% set total_weight = namespace(value=0) %}
+        {% for item in items %}
+            {% if item.weight %}
+                {% set total_weight.value = total_weight.value + (item.weight * item.quantity) %}
+            {% endif %}
+        {% endfor %}
+        <div class="summary-row">
+            <span class="summary-label">Waga netto:</span>
+            <span class="summary-value">{{ "%.2f"|format(total_weight.value) }} kg</span>
+        </div>
+        {% if extra_data.packaging_weight %}
+        <div class="summary-row">
+            <span class="summary-label">Waga opakowan:</span>
+            <span class="summary-value">{{ "%.2f"|format(extra_data.packaging_weight) }} kg</span>
+        </div>
+        {% endif %}
+        <div class="summary-total">
+            Waga brutto: {{ "%.2f"|format(total_weight.value + (extra_data.packaging_weight or 0)) }} kg
+        </div>
+    </div>
+</div>
+
+{% if extra_data.packages %}
+<div class="package-info">
+    <h4>Informacje o opakowaniach</h4>
+    <div class="package-grid">
+        {% if extra_data.packages.pallets %}
+        <div class="package-item">
+            <div class="package-item-label">Palety</div>
+            <div class="package-item-value">{{ extra_data.packages.pallets }}</div>
+            <div class="package-item-unit">szt.</div>
+        </div>
+        {% endif %}
+        {% if extra_data.packages.boxes %}
+        <div class="package-item">
+            <div class="package-item-label">Kartony</div>
+            <div class="package-item-value">{{ extra_data.packages.boxes }}</div>
+            <div class="package-item-unit">szt.</div>
+        </div>
+        {% endif %}
+        {% if extra_data.packages.dimensions %}
+        <div class="package-item">
+            <div class="package-item-label">Wymiary</div>
+            <div class="package-item-value" style="font-size: 10pt;">{{ extra_data.packages.dimensions }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="checklist">
+    <div class="checklist-header">Lista kontrolna pakowania</div>
+    <div class="checklist-item">
+        <div class="checkbox"></div>
+        <span>Wszystkie pozycje sprawdzone i zgodne z zamowieniem</span>
+    </div>
+    <div class="checklist-item">
+        <div class="checkbox"></div>
+        <span>Detale odpowiednio zabezpieczone przed uszkodzeniem</span>
+    </div>
+    <div class="checklist-item">
+        <div class="checkbox"></div>
+        <span>Oznaczenie opakowan zgodne z wymaganiami</span>
+    </div>
+    <div class="checklist-item">
+        <div class="checkbox"></div>
+        <span>Dokumenty przewozowe dolaczone</span>
+    </div>
+</div>
+
+<div class="signature-section">
+    <div class="signature-box">
+        <div class="signature-label">Pakujacy / Packed by</div>
+    </div>
+    <div class="signature-box">
+        <div class="signature-label">Kontrola jakosci / QC</div>
+    </div>
+    <div class="signature-box">
+        <div class="signature-label">Data / Date</div>
+    </div>
+</div>
+{% endblock %}

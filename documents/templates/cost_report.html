@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ doc_type_label }} - {{ doc_number }}</title>
+    <style>
+        @page {
+            size: A4 landscape;
+            margin: 1cm;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Open Sans', 'DejaVu Sans', Arial, sans-serif;
+            font-size: 9pt;
+            color: #1f2937;
+            line-height: 1.3;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 3px solid #7c3aed;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            max-height: 40px;
+        }
+
+        .company-name {
+            font-weight: bold;
+            font-size: 12pt;
+            color: #7c3aed;
+        }
+
+        .header-right {
+            text-align: right;
+        }
+
+        .report-title {
+            font-size: 16pt;
+            font-weight: bold;
+            color: #7c3aed;
+            margin-bottom: 5px;
+        }
+
+        .report-meta {
+            font-size: 9pt;
+            color: #6b7280;
+        }
+
+        .info-bar {
+            background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-item {
+            text-align: center;
+        }
+
+        .info-label {
+            font-size: 8pt;
+            opacity: 0.8;
+            margin-bottom: 2px;
+        }
+
+        .info-value {
+            font-size: 11pt;
+            font-weight: bold;
+        }
+
+        .main-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+            font-size: 8pt;
+        }
+
+        .main-table th {
+            background: #7c3aed;
+            color: white;
+            padding: 6px 4px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 7pt;
+            text-transform: uppercase;
+            border: 1px solid #6d28d9;
+        }
+
+        .main-table td {
+            padding: 5px 4px;
+            border: 1px solid #e5e7eb;
+            vertical-align: middle;
+        }
+
+        .main-table tr:nth-child(even) {
+            background: #faf5ff;
+        }
+
+        .main-table tr:hover {
+            background: #f3e8ff;
+        }
+
+        .thumbnail-cell {
+            width: 55px;
+            text-align: center;
+            padding: 3px !important;
+        }
+
+        .thumbnail-img {
+            max-width: 50px;
+            max-height: 40px;
+            border: 1px solid #d1d5db;
+            border-radius: 3px;
+            background: #1f2937;
+        }
+
+        .thumbnail-placeholder {
+            width: 50px;
+            height: 40px;
+            background: #f3f4f6;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 6pt;
+            color: #9ca3af;
+        }
+
+        .part-name {
+            font-weight: 600;
+            color: #1f2937;
+            font-size: 8pt;
+        }
+
+        .part-code {
+            font-size: 7pt;
+            color: #6b7280;
+        }
+
+        .material-cell {
+            font-size: 7pt;
+            text-align: center;
+        }
+
+        .material-tag {
+            display: inline-block;
+            background: #ede9fe;
+            color: #6d28d9;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-size: 7pt;
+        }
+
+        .number-cell {
+            text-align: right;
+            font-family: 'Consolas', monospace;
+            font-size: 8pt;
+        }
+
+        .qty-cell {
+            text-align: center;
+            font-weight: bold;
+            color: #059669;
+        }
+
+        .cost-positive {
+            color: #dc2626;
+        }
+
+        .cost-total {
+            font-weight: bold;
+            background: #fef3c7 !important;
+        }
+
+        .material-header {
+            background: #ede9fe !important;
+        }
+
+        .material-header td {
+            font-weight: bold;
+            color: #6d28d9;
+            padding: 5px 8px !important;
+            font-size: 8pt;
+            border-bottom: 2px solid #a78bfa !important;
+        }
+
+        .summary-section {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .summary-box {
+            flex: 1;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .summary-box h4 {
+            margin: 0 0 10px 0;
+            font-size: 9pt;
+            color: #6b7280;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 6px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 8pt;
+        }
+
+        .summary-label {
+            color: #6b7280;
+        }
+
+        .summary-value {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .summary-total {
+            background: #7c3aed;
+            color: white;
+            margin: 10px -12px -12px;
+            padding: 10px 12px;
+            border-radius: 0 0 6px 6px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .cost-breakdown-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8pt;
+        }
+
+        .cost-breakdown-table th {
+            background: #f3f4f6;
+            padding: 6px 8px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #d1d5db;
+        }
+
+        .cost-breakdown-table td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .cost-breakdown-table tr:last-child td {
+            border-bottom: none;
+            font-weight: bold;
+            background: #fef3c7;
+        }
+
+        .cost-bar {
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 3px;
+        }
+
+        .cost-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+        }
+
+        .bar-material { background: #3b82f6; }
+        .bar-cutting { background: #ef4444; }
+        .bar-bending { background: #f59e0b; }
+        .bar-other { background: #8b5cf6; }
+
+        .footer {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 7pt;
+            color: #9ca3af;
+            text-align: center;
+        }
+
+        .legend {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 10px;
+            font-size: 8pt;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        .nesting-info {
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+            border-radius: 6px;
+            padding: 10px 15px;
+            margin-bottom: 15px;
+        }
+
+        .nesting-info h4 {
+            color: #065f46;
+            margin: 0 0 8px 0;
+            font-size: 9pt;
+        }
+
+        .nesting-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 8pt;
+        }
+
+        .nesting-stat {
+            display: flex;
+            gap: 5px;
+        }
+
+        .nesting-stat-label {
+            color: #6b7280;
+        }
+
+        .nesting-stat-value {
+            font-weight: bold;
+            color: #065f46;
+        }
+
+        .efficiency-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 8pt;
+        }
+
+        .efficiency-high { background: #dcfce7; color: #166534; }
+        .efficiency-medium { background: #fef3c7; color: #92400e; }
+        .efficiency-low { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            {% if seller.logo_base64 %}
+                <img src="data:image/png;base64,{{ seller.logo_base64 }}" class="logo" alt="Logo">
+            {% endif %}
+            <div>
+                <div class="company-name">{{ seller.name }}</div>
+                <div style="font-size: 8pt; color: #6b7280;">{{ seller.address }}</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="report-title">RAPORT KOSZTOWY</div>
+            <div class="report-meta">
+                Nr: {{ doc_number }}<br>
+                Data: {{ issue_date }}<br>
+                {% if extra_data.order_number %}Zamowienie: {{ extra_data.order_number }}{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="info-bar">
+        <div class="info-item">
+            <div class="info-label">Klient</div>
+            <div class="info-value">{{ buyer.name }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Pozycji</div>
+            <div class="info-value">{{ items | length }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Laczna ilosc</div>
+            <div class="info-value">{{ items | sum(attribute='quantity') | int }} szt.</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Koszt calkowity</div>
+            <div class="info-value">{{ "%.2f"|format(total_net) }} {{ currency }}</div>
+        </div>
+    </div>
+
+    {% if extra_data.nesting %}
+    <div class="nesting-info">
+        <h4>Informacje o nestingu</h4>
+        <div class="nesting-stats">
+            <div class="nesting-stat">
+                <span class="nesting-stat-label">Arkuszy:</span>
+                <span class="nesting-stat-value">{{ extra_data.nesting.total_sheets }}</span>
+            </div>
+            <div class="nesting-stat">
+                <span class="nesting-stat-label">Wykorzystanie:</span>
+                <span class="nesting-stat-value">
+                    {% set util = extra_data.nesting.utilization or 0 %}
+                    <span class="efficiency-badge {% if util >= 75 %}efficiency-high{% elif util >= 50 %}efficiency-medium{% else %}efficiency-low{% endif %}">
+                        {{ "%.1f"|format(util) }}%
+                    </span>
+                </span>
+            </div>
+            <div class="nesting-stat">
+                <span class="nesting-stat-label">Odpad:</span>
+                <span class="nesting-stat-value">{{ "%.2f"|format(extra_data.nesting.waste_area or 0) }} m2</span>
+            </div>
+            <div class="nesting-stat">
+                <span class="nesting-stat-label">Algorytm:</span>
+                <span class="nesting-stat-value">{{ extra_data.nesting.algorithm or 'FAST' }}</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <table class="main-table">
+        <thead>
+            <tr>
+                <th style="width: 3%;">Lp</th>
+                <th style="width: 7%;">Podglad</th>
+                <th style="width: 18%;">Nazwa detalu</th>
+                <th style="width: 8%;">Material</th>
+                <th style="width: 7%;">Wymiary</th>
+                <th style="width: 5%;">Ilosc</th>
+                <th style="width: 6%;">Pole [cm2]</th>
+                <th style="width: 6%;">Ciecie [mm]</th>
+                <th style="width: 8%;">Material</th>
+                <th style="width: 8%;">Ciecie</th>
+                <th style="width: 8%;">Giecie</th>
+                <th style="width: 8%;">Inne</th>
+                <th style="width: 8%;">SUMA</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% set current_material = namespace(value='') %}
+            {% for item in items %}
+                {# Naglowek grupy materialowej #}
+                {% if item.material and item.material != current_material.value %}
+                    {% set current_material.value = item.material %}
+                    <tr class="material-header">
+                        <td colspan="13">
+                            Material: {{ item.material }}{% if item.thickness_mm %}, Grubosc: {{ item.thickness_mm }} mm{% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+
+                <tr>
+                    <td class="text-center">{{ loop.index }}</td>
+                    <td class="thumbnail-cell">
+                        {% if item.thumbnail_base64 %}
+                            <img src="data:image/png;base64,{{ item.thumbnail_base64 }}"
+                                 class="thumbnail-img"
+                                 alt="{{ item.name }}">
+                        {% elif item.thumbnail_url %}
+                            <img src="{{ item.thumbnail_url }}"
+                                 class="thumbnail-img"
+                                 alt="{{ item.name }}">
+                        {% else %}
+                            <div class="thumbnail-placeholder">-</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="part-name">{{ item.name[:25] }}{% if item.name|length > 25 %}...{% endif %}</div>
+                        {% if item.product_code %}
+                        <div class="part-code">{{ item.product_code }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="material-cell">
+                        {% if item.material %}
+                            <span class="material-tag">{{ item.material }}</span>
+                            {% if item.thickness_mm %}<br>{{ item.thickness_mm }}mm{% endif %}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="text-center" style="font-size: 7pt;">
+                        {% if item.width_mm and item.height_mm %}
+                            {{ "%.0f"|format(item.width_mm) }}x{{ "%.0f"|format(item.height_mm) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="qty-cell">{{ "%.0f"|format(item.quantity) }}</td>
+                    <td class="number-cell">
+                        {% if item.area_mm2 %}
+                            {{ "%.1f"|format(item.area_mm2 / 100) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="number-cell">
+                        {% if item.cutting_length_mm %}
+                            {{ "%.0f"|format(item.cutting_length_mm) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="number-cell cost-positive">
+                        {% if item.material_cost %}
+                            {{ "%.2f"|format(item.material_cost) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="number-cell cost-positive">
+                        {% if item.cutting_cost %}
+                            {{ "%.2f"|format(item.cutting_cost) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="number-cell cost-positive">
+                        {% if item.bending_cost %}
+                            {{ "%.2f"|format(item.bending_cost) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="number-cell cost-positive">
+                        {% if item.other_cost %}
+                            {{ "%.2f"|format(item.other_cost) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="number-cell cost-total">
+                        {% if item.value_net %}
+                            {{ "%.2f"|format(item.value_net) }}
+                        {% else %}
+                            {% set item_total = (item.material_cost or 0) + (item.cutting_cost or 0) + (item.bending_cost or 0) + (item.other_cost or 0) %}
+                            {{ "%.2f"|format(item_total * item.quantity) }}
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-section">
+        <div class="summary-box">
+            <h4>Struktura kosztow</h4>
+            {% set total_material = namespace(value=0) %}
+            {% set total_cutting = namespace(value=0) %}
+            {% set total_bending = namespace(value=0) %}
+            {% set total_other = namespace(value=0) %}
+            {% for item in items %}
+                {% if item.material_cost %}
+                    {% set total_material.value = total_material.value + (item.material_cost * item.quantity) %}
+                {% endif %}
+                {% if item.cutting_cost %}
+                    {% set total_cutting.value = total_cutting.value + (item.cutting_cost * item.quantity) %}
+                {% endif %}
+                {% if item.bending_cost %}
+                    {% set total_bending.value = total_bending.value + (item.bending_cost * item.quantity) %}
+                {% endif %}
+                {% if item.other_cost %}
+                    {% set total_other.value = total_other.value + (item.other_cost * item.quantity) %}
+                {% endif %}
+            {% endfor %}
+
+            {% set grand_total = total_material.value + total_cutting.value + total_bending.value + total_other.value %}
+            {% if grand_total == 0 %}{% set grand_total = 1 %}{% endif %}
+
+            <div class="summary-row">
+                <span class="summary-label">Material:</span>
+                <span class="summary-value">{{ "%.2f"|format(total_material.value) }} {{ currency }} ({{ "%.1f"|format(total_material.value / grand_total * 100) }}%)</span>
+            </div>
+            <div class="cost-bar"><div class="cost-bar-fill bar-material" style="width: {{ (total_material.value / grand_total * 100)|int }}%;"></div></div>
+
+            <div class="summary-row" style="margin-top: 8px;">
+                <span class="summary-label">Ciecie:</span>
+                <span class="summary-value">{{ "%.2f"|format(total_cutting.value) }} {{ currency }} ({{ "%.1f"|format(total_cutting.value / grand_total * 100) }}%)</span>
+            </div>
+            <div class="cost-bar"><div class="cost-bar-fill bar-cutting" style="width: {{ (total_cutting.value / grand_total * 100)|int }}%;"></div></div>
+
+            <div class="summary-row" style="margin-top: 8px;">
+                <span class="summary-label">Giecie:</span>
+                <span class="summary-value">{{ "%.2f"|format(total_bending.value) }} {{ currency }} ({{ "%.1f"|format(total_bending.value / grand_total * 100) }}%)</span>
+            </div>
+            <div class="cost-bar"><div class="cost-bar-fill bar-bending" style="width: {{ (total_bending.value / grand_total * 100)|int }}%;"></div></div>
+
+            <div class="summary-row" style="margin-top: 8px;">
+                <span class="summary-label">Inne:</span>
+                <span class="summary-value">{{ "%.2f"|format(total_other.value) }} {{ currency }} ({{ "%.1f"|format(total_other.value / grand_total * 100) }}%)</span>
+            </div>
+            <div class="cost-bar"><div class="cost-bar-fill bar-other" style="width: {{ (total_other.value / grand_total * 100)|int }}%;"></div></div>
+
+            <div class="summary-total">
+                <span>RAZEM:</span>
+                <span>{{ "%.2f"|format(total_net) }} {{ currency }}</span>
+            </div>
+        </div>
+
+        <div class="summary-box">
+            <h4>Podsumowanie produkcji</h4>
+            <div class="summary-row">
+                <span class="summary-label">Liczba pozycji:</span>
+                <span class="summary-value">{{ items | length }}</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label">Lacznie sztuk:</span>
+                <span class="summary-value">{{ items | sum(attribute='quantity') | int }}</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label">Liczba materialow:</span>
+                <span class="summary-value">
+                    {% set materials = items | map(attribute='material') | select | unique | list %}
+                    {{ materials | length }}
+                </span>
+            </div>
+            {% if extra_data.total_cutting_length %}
+            <div class="summary-row">
+                <span class="summary-label">Calkowita dlugosc ciecia:</span>
+                <span class="summary-value">{{ "%.1f"|format(extra_data.total_cutting_length / 1000) }} m</span>
+            </div>
+            {% endif %}
+            {% if extra_data.total_area %}
+            <div class="summary-row">
+                <span class="summary-label">Calkowite pole:</span>
+                <span class="summary-value">{{ "%.2f"|format(extra_data.total_area / 1000000) }} m2</span>
+            </div>
+            {% endif %}
+            {% if extra_data.total_weight %}
+            <div class="summary-row">
+                <span class="summary-label">Calkowita waga:</span>
+                <span class="summary-value">{{ "%.2f"|format(extra_data.total_weight) }} kg</span>
+            </div>
+            {% endif %}
+
+            <div class="summary-total">
+                <span>Koszt jednostkowy (sr.):</span>
+                <span>{{ "%.2f"|format(total_net / (items | sum(attribute='quantity'))) }} {{ currency }}/szt</span>
+            </div>
+        </div>
+
+        {% if extra_data.margin_info %}
+        <div class="summary-box">
+            <h4>Informacje o marzy</h4>
+            <div class="summary-row">
+                <span class="summary-label">Koszt netto:</span>
+                <span class="summary-value">{{ "%.2f"|format(extra_data.margin_info.cost_net or total_net) }} {{ currency }}</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label">Marza ({{ extra_data.margin_info.margin_percent or 0 }}%):</span>
+                <span class="summary-value">{{ "%.2f"|format(extra_data.margin_info.margin_value or 0) }} {{ currency }}</span>
+            </div>
+            <div class="summary-total">
+                <span>Cena sprzedazy:</span>
+                <span>{{ "%.2f"|format(extra_data.margin_info.sale_price or total_gross) }} {{ currency }}</span>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color bar-material"></div>
+            <span>Material</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color bar-cutting"></div>
+            <span>Ciecie</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color bar-bending"></div>
+            <span>Giecie</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color bar-other"></div>
+            <span>Inne</span>
+        </div>
+    </div>
+
+    <div class="footer">
+        {{ footer_text | default('Raport wygenerowany automatycznie z systemu NewERP. Dane maja charakter informacyjny.') }}
+    </div>
+</body>
+</html>

@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .items-with-thumbnails {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+    }
+
+    .items-with-thumbnails th {
+        background: #2563eb;
+        color: white;
+        font-size: 9pt;
+        padding: 8px 6px;
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid #1d4ed8;
+    }
+
+    .items-with-thumbnails td {
+        padding: 8px 6px;
+        border-bottom: 1px solid #e5e7eb;
+        vertical-align: middle;
+        font-size: 9pt;
+    }
+
+    .items-with-thumbnails tr:nth-child(even) {
+        background: #f9fafb;
+    }
+
+    .items-with-thumbnails tr:hover {
+        background: #f3f4f6;
+    }
+
+    .thumbnail-cell {
+        width: 70px;
+        text-align: center;
+        padding: 4px !important;
+    }
+
+    .thumbnail-img {
+        max-width: 60px;
+        max-height: 50px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        background: #1f2937;
+    }
+
+    .thumbnail-placeholder {
+        width: 60px;
+        height: 50px;
+        background: #e5e7eb;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 8pt;
+        color: #9ca3af;
+    }
+
+    .material-header {
+        background: #dbeafe !important;
+        font-weight: bold;
+        color: #1e40af;
+    }
+
+    .material-header td {
+        padding: 6px 10px !important;
+        font-size: 9pt;
+        border-bottom: 2px solid #3b82f6 !important;
+    }
+
+    .part-name {
+        font-weight: 500;
+        color: #1f2937;
+    }
+
+    .part-details {
+        font-size: 8pt;
+        color: #6b7280;
+        margin-top: 2px;
+    }
+
+    .qty-cell {
+        font-weight: bold;
+        font-size: 11pt;
+        color: #059669;
+        text-align: center;
+    }
+
+    .dimension-cell {
+        font-size: 8pt;
+        color: #6b7280;
+        text-align: center;
+    }
+
+    .weight-cell {
+        text-align: right;
+        font-size: 9pt;
+    }
+
+    .summary-row {
+        background: #f3f4f6 !important;
+        font-weight: bold;
+    }
+
+    .summary-row td {
+        padding: 10px !important;
+        border-top: 2px solid #d1d5db;
+    }
+
+    .total-weight {
+        background: #dcfce7;
+        color: #166534;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-weight: bold;
+    }
+
+    .wz-info-box {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        padding: 12px 15px;
+        margin-bottom: 20px;
+    }
+
+    .wz-info-box h4 {
+        color: #1d4ed8;
+        margin: 0 0 8px 0;
+        font-size: 11pt;
+    }
+
+    .wz-info-row {
+        display: flex;
+        gap: 30px;
+        font-size: 10pt;
+    }
+
+    .wz-info-item {
+        display: flex;
+        gap: 8px;
+    }
+
+    .wz-info-label {
+        color: #6b7280;
+    }
+
+    .wz-info-value {
+        font-weight: bold;
+        color: #1f2937;
+    }
+</style>
+
+<h3 style="margin-bottom: 15px; color: #1e40af;">Specyfikacja wydania</h3>
+
+{% if extra_data.order_number %}
+<div class="wz-info-box">
+    <h4>Dane zamowienia</h4>
+    <div class="wz-info-row">
+        <div class="wz-info-item">
+            <span class="wz-info-label">Nr zamowienia:</span>
+            <span class="wz-info-value">{{ extra_data.order_number }}</span>
+        </div>
+        {% if extra_data.delivery_date %}
+        <div class="wz-info-item">
+            <span class="wz-info-label">Data dostawy:</span>
+            <span class="wz-info-value">{{ extra_data.delivery_date }}</span>
+        </div>
+        {% endif %}
+        {% if extra_data.total_weight %}
+        <div class="wz-info-item">
+            <span class="wz-info-label">Waga calkowita:</span>
+            <span class="wz-info-value">{{ "%.2f"|format(extra_data.total_weight) }} kg</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<table class="items-with-thumbnails">
+    <thead>
+        <tr>
+            <th style="width: 5%;">Lp</th>
+            <th style="width: 12%;" class="text-center">Podglad</th>
+            <th style="width: 35%;">Nazwa detalu</th>
+            <th style="width: 13%;" class="text-center">Material</th>
+            <th style="width: 10%;" class="text-center">Wymiary</th>
+            <th style="width: 10%;" class="text-center">Ilosc</th>
+            <th style="width: 8%;" class="text-right">Waga [kg]</th>
+            <th style="width: 7%;">Jm</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% set current_material = namespace(value='') %}
+        {% for item in items %}
+            {# Naglowek grupy materialowej #}
+            {% if item.material and item.material != current_material.value %}
+                {% set current_material.value = item.material %}
+                <tr class="material-header">
+                    <td colspan="8">
+                        Material: {{ item.material }}{% if item.thickness_mm %}, Grubosc: {{ item.thickness_mm }} mm{% endif %}
+                    </td>
+                </tr>
+            {% endif %}
+
+            <tr>
+                <td class="text-center">{{ loop.index }}</td>
+                <td class="thumbnail-cell">
+                    {% if item.thumbnail_base64 %}
+                        <img src="data:image/png;base64,{{ item.thumbnail_base64 }}"
+                             class="thumbnail-img"
+                             alt="{{ item.name }}">
+                    {% elif item.thumbnail_url %}
+                        <img src="{{ item.thumbnail_url }}"
+                             class="thumbnail-img"
+                             alt="{{ item.name }}">
+                    {% else %}
+                        <div class="thumbnail-placeholder">-</div>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="part-name">{{ item.name }}</div>
+                    {% if item.product_code %}
+                    <div class="part-details">Kod: {{ item.product_code }}</div>
+                    {% endif %}
+                    {% if item.file_2d %}
+                    <div class="part-details">Plik: {{ item.file_2d }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if item.material %}
+                        {{ item.material }}
+                        {% if item.thickness_mm %}<br><small>{{ item.thickness_mm }}mm</small>{% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="dimension-cell">
+                    {% if item.width_mm and item.height_mm %}
+                        {{ "%.0f"|format(item.width_mm) }} x {{ "%.0f"|format(item.height_mm) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="qty-cell">{{ "%.0f"|format(item.quantity) }}</td>
+                <td class="weight-cell">
+                    {% if item.weight %}
+                        {{ "%.2f"|format(item.weight) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>{{ item.unit }}</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr class="summary-row">
+            <td colspan="5" class="text-right">Razem pozycji: <strong>{{ items | length }}</strong></td>
+            <td class="qty-cell">
+                {{ items | sum(attribute='quantity') | int }}
+            </td>
+            <td class="text-right">
+                {% set total_weight = namespace(value=0) %}
+                {% for item in items %}
+                    {% if item.weight %}
+                        {% set total_weight.value = total_weight.value + (item.weight * item.quantity) %}
+                    {% endif %}
+                {% endfor %}
+                {% if total_weight.value > 0 %}
+                    <span class="total-weight">{{ "%.2f"|format(total_weight.value) }}</span>
+                {% endif %}
+            </td>
+            <td></td>
+        </tr>
+    </tfoot>
+</table>
+
+<!-- Adres dostawy -->
+{% if extra_data.shipping_address %}
+<div class="extra-section" style="margin-top: 20px;">
+    <h4>Adres dostawy:</h4>
+    <p>{{ extra_data.shipping_address }}</p>
+</div>
+{% endif %}
+
+<!-- Uwagi do wydania -->
+{% if extra_data.release_notes %}
+<div class="notes-section" style="margin-top: 15px;">
+    <div class="notes-label">Uwagi do wydania:</div>
+    {{ extra_data.release_notes }}
+</div>
+{% endif %}
+
+<!-- Podpisy -->
+<div class="signatures-section clearfix mt-30">
+    <div class="col-left">
+        <div class="signature-box">
+            <div class="signature-label">Podpis osoby upowaznionej<br>do wydania towaru</div>
+        </div>
+    </div>
+    <div class="col-right">
+        <div class="signature-box">
+            <div class="signature-label">Podpis osoby upowaznionej<br>do odbioru towaru</div>
+        </div>
+    </div>
+</div>
+
+<p style="margin-top: 50px; text-align: center; font-size: 9pt; color: #666;">
+    Towar wydano zgodnie z zamowieniem. Reklamacje dotyczace ilosciowe i jakosciowe prosimy zglaszac w ciagu 7 dni.
+</p>
+{% endblock %}

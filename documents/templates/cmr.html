@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>CMR - {{ doc_number }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1cm;
+        }
+
+        body {
+            font-family: 'Open Sans', 'DejaVu Sans', Arial, sans-serif;
+            font-size: 9pt;
+            color: #000;
+            line-height: 1.2;
+        }
+
+        .cmr-header {
+            text-align: right;
+            font-weight: bold;
+            font-size: 16pt;
+            margin-bottom: 10px;
+        }
+
+        .cmr-header span {
+            font-size: 10pt;
+            font-weight: normal;
+        }
+
+        .cmr-container {
+            border: 2px solid #000;
+            width: 100%;
+        }
+
+        .row {
+            display: flex;
+            width: 100%;
+            border-bottom: 1px solid #000;
+        }
+
+        .col {
+            border-right: 1px solid #000;
+            padding: 5px 8px;
+            position: relative;
+        }
+
+        .col:last-child {
+            border-right: none;
+        }
+
+        .col-50 { width: 50%; }
+        .col-33 { width: 33.33%; }
+        .col-100 { width: 100%; }
+
+        .label {
+            font-size: 7pt;
+            color: #444;
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        .label strong {
+            font-size: 8pt;
+            color: #000;
+        }
+
+        .content {
+            font-weight: bold;
+            font-size: 10pt;
+            min-height: 2.5em;
+        }
+
+        .goods-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8pt;
+        }
+
+        .goods-table th {
+            border-bottom: 1px solid #000;
+            border-right: 1px solid #000;
+            padding: 3px;
+            text-align: center;
+            font-weight: normal;
+            font-size: 7pt;
+            background: #f5f5f5;
+        }
+
+        .goods-table td {
+            border-right: 1px solid #000;
+            border-bottom: 1px solid #ddd;
+            padding: 4px;
+            vertical-align: top;
+        }
+
+        .goods-table td:last-child,
+        .goods-table th:last-child {
+            border-right: none;
+        }
+
+        .signature-row {
+            min-height: 80px;
+        }
+
+        .signature-box {
+            height: 70px;
+            vertical-align: bottom;
+            padding-top: 50px;
+        }
+
+        .legal-note {
+            font-size: 7pt;
+            padding: 5px 8px;
+            text-align: justify;
+            background: #f9f9f9;
+        }
+
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .bold { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="cmr-header">
+        CMR <span>Miedzynarodowy List Przewozowy / International Consignment Note</span>
+    </div>
+
+    <div class="cmr-container">
+        <!-- Wiersz 1: Nadawca + Numer -->
+        <div class="row">
+            <div class="col col-50">
+                <span class="label"><strong>1.</strong> Nadawca (nazwa, adres, kraj) / Sender</span>
+                <div class="content">
+                    {{ seller.name }}<br>
+                    {{ seller.address }}<br>
+                    {{ seller.country | default('Polska') }}
+                </div>
+            </div>
+            <div class="col col-50">
+                <span class="label">Miedzynarodowy samochodowy list przewozowy</span>
+                <span class="label"><strong>Nr / No:</strong> {{ doc_number }}</span>
+                <div class="content" style="margin-top: 10px;">
+                    Data wystawienia: {{ issue_date }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Wiersz 2: Odbiorca + Przewoznik -->
+        <div class="row">
+            <div class="col col-50">
+                <span class="label"><strong>2.</strong> Odbiorca (nazwa, adres, kraj) / Consignee</span>
+                <div class="content">
+                    {{ buyer.name }}<br>
+                    {{ buyer.address }}<br>
+                    {{ buyer.country | default('') }}
+                </div>
+            </div>
+            <div class="col col-50">
+                <span class="label"><strong>16.</strong> Przewoznik (nazwa, adres, kraj) / Carrier</span>
+                <div class="content">
+                    {{ extra_data.carrier_name }}<br>
+                    {{ extra_data.carrier_address }}<br>
+                    Nr rej.: {{ extra_data.carrier_license }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Wiersz 3: Miejsce dostawy + Kolejni przewoznicy -->
+        <div class="row">
+            <div class="col col-50">
+                <span class="label"><strong>3.</strong> Miejsce przeznaczenia / Place of delivery</span>
+                <div class="content">{{ extra_data.delivery_place }}</div>
+                <div style="border-top: 1px solid #000; margin-top: 5px; padding-top: 5px;">
+                    <span class="label"><strong>4.</strong> Miejsce i data zaladowania / Place and date of taking over</span>
+                    <div class="content">{{ issue_date }} / {{ extra_data.loading_place | default(place) }}</div>
+                </div>
+            </div>
+            <div class="col col-50">
+                <span class="label"><strong>17.</strong> Kolejni przewoznicy / Successive carriers</span>
+                <div class="content">{{ extra_data.successive_carriers | default('-') }}</div>
+            </div>
+        </div>
+
+        <!-- Wiersz 4: Dokumenty + Zastrzezenia -->
+        <div class="row">
+            <div class="col col-50">
+                <span class="label"><strong>5.</strong> Zalaczone dokumenty / Documents attached</span>
+                <div class="content">{{ extra_data.attached_docs | default('WZ, Faktura') }}</div>
+            </div>
+            <div class="col col-50">
+                <span class="label"><strong>18.</strong> Zastrzezenia przewoznika / Carrier's reservations</span>
+                <div class="content">{{ extra_data.carrier_notes | default('Brak zastrzezen') }}</div>
+            </div>
+        </div>
+
+        <!-- Tabela towarow -->
+        <div class="row">
+            <div class="col col-100" style="padding: 0;">
+                <table class="goods-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 8%;">6. Cechy<br>Marks</th>
+                            <th style="width: 8%;">7. Ilosc<br>Number</th>
+                            <th style="width: 12%;">8. Opakowanie<br>Packing</th>
+                            <th style="width: 32%;">9. Rodzaj towaru<br>Nature of goods</th>
+                            <th style="width: 12%;">10. Nr stat.<br>Stat. No</th>
+                            <th style="width: 14%;">11. Waga brutto<br>Gross (kg)</th>
+                            <th style="width: 14%;">12. Objetosc<br>Volume (m3)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td class="text-center">{{ loop.index }}</td>
+                            <td class="text-center">{{ "%.0f"|format(item.quantity) }}</td>
+                            <td>{{ item.package_type | default(item.unit) }}</td>
+                            <td>{{ item.name }}</td>
+                            <td>{{ item.hs_code | default('-') }}</td>
+                            <td class="text-right">{{ "%.2f"|format(item.weight | default(0)) }}</td>
+                            <td class="text-right">{{ item.volume | default('-') }}</td>
+                        </tr>
+                        {% endfor %}
+                        <!-- Puste wiersze dla recznego uzupelnienia -->
+                        <tr style="height: 40px;">
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                        </tr>
+                        <!-- Podsumowanie -->
+                        <tr class="bold" style="border-top: 2px solid #000;">
+                            <td colspan="5" class="text-right">RAZEM / TOTAL:</td>
+                            <td class="text-right">{{ extra_data.total_weight }}</td>
+                            <td></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Postanowienia specjalne -->
+        <div class="row">
+            <div class="col col-100">
+                <span class="label"><strong>19.</strong> Postanowienia specjalne / Special agreements</span>
+                <div class="content">{{ extra_data.special_agreements | default('-') }}</div>
+            </div>
+        </div>
+
+        <!-- Nota prawna -->
+        <div class="row">
+            <div class="col col-100 legal-note">
+                Niniejszy przewoz podlega postanowieniom Konwencji o umowie miedzynarodowego przewozu drogowego
+                towarow (CMR) bez wzgledu na jakakolwiek klauzule przeciwna. / This carriage is subject,
+                notwithstanding any clause to the contrary, to the Convention on the Contract for the
+                International Carriage of Goods by Road (CMR).
+            </div>
+        </div>
+
+        <!-- Podpisy -->
+        <div class="row signature-row">
+            <div class="col col-33">
+                <span class="label"><strong>22.</strong> Podpis i stempel nadawcy<br>Sender's signature and stamp</span>
+                <div class="signature-box">
+                    ............................................
+                </div>
+            </div>
+            <div class="col col-33">
+                <span class="label"><strong>23.</strong> Podpis i stempel przewoznika<br>Carrier's signature and stamp</span>
+                <div class="signature-box">
+                    ............................................
+                </div>
+            </div>
+            <div class="col col-33">
+                <span class="label"><strong>24.</strong> Podpis i stempel odbiorcy<br>Consignee's signature and stamp</span>
+                <div class="signature-box">
+                    Data / Date: .......................<br><br>
+                    ............................................
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
