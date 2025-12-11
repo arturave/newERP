@@ -145,14 +145,15 @@ class CADCanvas(tk.Canvas):
         Konwertuj współrzędne świata (mm) na screen (piksele).
 
         Y jest odwrócone (CAD: Y w górę, screen: Y w dół).
+        Obsługuje ujemne współrzędne world (offset względem min).
         """
-        sx = self._offset_x + x * self._scale
+        sx = self._offset_x + (x - self._world_min_x) * self._scale
         sy = self._offset_y + (self._world_max_y - y) * self._scale
         return sx, sy
 
     def screen_to_world(self, sx: float, sy: float) -> Tuple[float, float]:
         """Konwertuj współrzędne screen (piksele) na world (mm)."""
-        x = (sx - self._offset_x) / self._scale
+        x = self._world_min_x + (sx - self._offset_x) / self._scale
         y = self._world_max_y - (sy - self._offset_y) / self._scale
         return x, y
 
@@ -245,7 +246,7 @@ class CADCanvas(tk.Canvas):
         self._scale = new_scale
 
         # Przelicz offset żeby punkt world był w tym samym miejscu screen
-        self._offset_x = sx - wx * self._scale
+        self._offset_x = sx - (wx - self._world_min_x) * self._scale
         self._offset_y = sy - (self._world_max_y - wy) * self._scale
 
         self.redraw()
