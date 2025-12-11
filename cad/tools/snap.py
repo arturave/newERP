@@ -163,7 +163,7 @@ class SnapManager:
         if entity is None:
             return
 
-        etype = entity.entity_type.upper() if hasattr(entity, 'entity_type') else ''
+        etype = entity.entity_type.value if hasattr(entity, 'entity_type') else ''
 
         if etype == 'LINE':
             # Endpoints linii
