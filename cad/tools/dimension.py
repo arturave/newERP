@@ -88,8 +88,12 @@ class DimensionTool:
         if not self._active:
             return
 
-        # Konwertuj na world coords
+        # Konwertuj na world coords z uwzględnieniem snap
         wx, wy = self.canvas.screen_to_world(event.x, event.y)
+
+        # Użyj snap jeśli dostępny
+        if hasattr(self.canvas, 'get_snapped_position'):
+            wx, wy = self.canvas.get_snapped_position(wx, wy)
 
         if self._mode == "linear":
             if self._first_point is None:

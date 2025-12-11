@@ -13,6 +13,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
+    from .tools.snap import SnapManager, SnapMode
+    HAS_SNAP = True
+except ImportError:
+    HAS_SNAP = False
+    SnapManager = None
+    SnapMode = None
+
+try:
     import customtkinter as ctk
     HAS_CTK = True
 except ImportError:
@@ -94,6 +102,16 @@ class CADCanvas(tk.Canvas):
         # Dane
         self._part = None
 
+        # Snap Manager
+        self._snap_manager = None
+        self._snap_enabled = True
+        if HAS_SNAP:
+            self._snap_manager = SnapManager(snap_radius=15.0)
+            self._snap_manager.set_canvas(self)
+
+        # Callbacks dla motion z snap
+        self._motion_callbacks: List[Callable] = []
+
         # Bindings
         self._setup_bindings()
 
@@ -116,6 +134,9 @@ class CADCanvas(tk.Canvas):
 
         # Resize
         self.bind("<Configure>", self._on_resize)
+
+        # Motion tracking dla snap
+        self.bind("<Motion>", self._on_motion)
 
     # ==================== Transformacje ====================
 
@@ -286,6 +307,84 @@ class CADCanvas(tk.Canvas):
             # Przerysuj po resize
             self.after(10, self.redraw)
 
+    def _on_motion(self, event):
+        """Obsługa ruchu myszy - aktualizacja snap"""
+        if self._is_panning:
+            return
+
+        # Konwertuj na world coords
+        wx, wy = self.screen_to_world(event.x, event.y)
+
+        # Sprawdź snap
+        snapped_x, snapped_y = wx, wy
+        if self._snap_manager and self._snap_enabled:
+            snap_point = self._snap_manager.find_snap(
+                wx, wy,
+                screen_transform=self.world_to_screen
+            )
+            if snap_point:
+                snapped_x, snapped_y = snap_point.x, snap_point.y
+                # Rysuj wskaźnik snap
+                sx, sy = self.world_to_screen(snapped_x, snapped_y)
+                self._snap_manager.draw_indicator(sx, sy)
+            else:
+                self._snap_manager.clear_indicator()
+
+        # Wywołaj callbacks
+        for callback in self._motion_callbacks:
+            try:
+                callback(event, wx, wy, snapped_x, snapped_y)
+            except Exception as e:
+                logger.error(f"Motion callback error: {e}")
+
+    # ==================== Snap ====================
+
+    def set_snap_enabled(self, enabled: bool):
+        """Włącz/wyłącz snap"""
+        self._snap_enabled = enabled
+        if not enabled and self._snap_manager:
+            self._snap_manager.clear_indicator()
+
+    def is_snap_enabled(self) -> bool:
+        """Czy snap jest włączony"""
+        return self._snap_enabled
+
+    def get_snapped_position(self, wx: float, wy: float) -> Tuple[float, float]:
+        """
+        Pobierz pozycję z uwzględnieniem snap.
+
+        Args:
+            wx, wy: Pozycja w world coords
+
+        Returns:
+            Tuple (snapped_x, snapped_y) - pozycja snap lub oryginalna
+        """
+        if self._snap_manager and self._snap_enabled:
+            return self._snap_manager.get_snapped_position(
+                wx, wy,
+                screen_transform=self.world_to_screen
+            )
+        return (wx, wy)
+
+    def add_motion_callback(self, callback: Callable):
+        """
+        Dodaj callback wywoływany przy ruchu myszy.
+
+        Callback signature: callback(event, world_x, world_y, snapped_x, snapped_y)
+        """
+        if callback not in self._motion_callbacks:
+            self._motion_callbacks.append(callback)
+
+    def remove_motion_callback(self, callback: Callable):
+        """Usuń motion callback"""
+        if callback in self._motion_callbacks:
+            self._motion_callbacks.remove(callback)
+
+    @property
+    def snap_manager(self):
+        """Dostęp do SnapManager"""
+        return self._snap_manager
+
     # ==================== Drawing ====================
 
     def set_part(self, part):
@@ -310,6 +409,10 @@ class CADCanvas(tk.Canvas):
             self._world_max_x += margin
             self._world_min_y -= margin
             self._world_max_y += margin
+
+            # Buduj punkty snap
+            if self._snap_manager:
+                self._snap_manager.build_snap_points(part)
 
         # Zoom fit i redraw
         self.after(10, self.zoom_fit)

@@ -171,6 +171,21 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
                 command=self._on_grid_toggle
             ).pack(side=tk.LEFT, padx=5)
 
+        # Snap checkbox
+        self._snap_var = tk.BooleanVar(value=True)
+        if HAS_CTK:
+            ctk.CTkCheckBox(
+                self._toolbar, text="Snap",
+                variable=self._snap_var,
+                command=self._on_snap_toggle
+            ).pack(side=tk.LEFT, padx=5)
+        else:
+            ttk.Checkbutton(
+                self._toolbar, text="Snap",
+                variable=self._snap_var,
+                command=self._on_snap_toggle
+            ).pack(side=tk.LEFT, padx=5)
+
         # Separator
         sep3 = ttk.Separator(self._toolbar, orient=tk.VERTICAL)
         sep3.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
@@ -456,6 +471,10 @@ Holes: {len(self._part.holes)}
         """Włącz/wyłącz siatkę"""
         self._canvas.set_grid_visible(self._grid_var.get())
 
+    def _on_snap_toggle(self):
+        """Włącz/wyłącz snap"""
+        self._canvas.set_snap_enabled(self._snap_var.get())
+
     def _on_auto_dimension(self):
         """Automatyczne wymiarowanie (bbox + otwory)"""
         if not self._part:
@@ -501,7 +520,13 @@ Holes: {len(self._part.holes)}
     def _on_mouse_move(self, event):
         """Aktualizuj pozycję myszy w status bar"""
         wx, wy = self._canvas.screen_to_world(event.x, event.y)
-        self._pos_label.configure(text=f"X: {wx:.2f}  Y: {wy:.2f}")
+
+        # Pokaż pozycję snap jeśli jest aktywny
+        snapped_x, snapped_y = self._canvas.get_snapped_position(wx, wy)
+        if (snapped_x, snapped_y) != (wx, wy):
+            self._pos_label.configure(text=f"X: {snapped_x:.2f}  Y: {snapped_y:.2f} [SNAP]")
+        else:
+            self._pos_label.configure(text=f"X: {wx:.2f}  Y: {wy:.2f}")
 
         # Aktualizuj zoom label
         zoom_pct = self._canvas.current_zoom_percent
