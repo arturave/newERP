@@ -1744,7 +1744,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         filepath = part.get('filepath', '')
 
         if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
-            self._open_cad_viewer(filepath)
+            self._open_cad_viewer(filepath, part_index=idx)
         else:
             messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
 
@@ -1762,7 +1762,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         filepath = part.get('filepath', '')
 
         if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
-            self._open_cad_viewer(filepath, editable=False)
+            self._open_cad_viewer(filepath, editable=False, part_index=idx)
         else:
             messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
 
@@ -1780,21 +1780,65 @@ class DetailedPartsPanel(ctk.CTkFrame):
         filepath = part.get('filepath', '')
 
         if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
-            self._open_cad_viewer(filepath, editable=True)
+            self._open_cad_viewer(filepath, editable=True, part_index=idx)
         else:
             messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
 
-    def _open_cad_viewer(self, filepath: str, editable: bool = False):
-        """Otworz CAD 2D Viewer dla pliku DXF"""
+    def _open_cad_viewer(self, filepath: str, editable: bool = False, part_index: int = None):
+        """Otworz CAD 2D Viewer dla pliku DXF z możliwością wyboru warstwy graweru"""
         try:
             from cad import open_cad_viewer
-            open_cad_viewer(self.winfo_toplevel(), filepath=filepath)
+            open_cad_viewer(
+                self.winfo_toplevel(),
+                filepath=filepath,
+                on_engrave_change=self._on_engrave_change,
+                part_index=part_index
+            )
         except ImportError as e:
             logger.warning(f"CAD viewer not available: {e}")
             messagebox.showerror("Blad", "Modul CAD 2D Viewer nie jest dostepny")
         except Exception as e:
             logger.error(f"Error opening CAD viewer: {e}")
             messagebox.showerror("Blad", f"Nie mozna otworzyc viewera: {e}")
+
+    def _on_engrave_change(self, filepath: str, engraving_length_mm: float,
+                           selected_layers: list, part_index: int = None):
+        """Callback wywoływany przez CAD Viewer gdy użytkownik zmieni wybór warstw graweru.
+
+        Aktualizuje długość graweru dla detalu i przelicza koszty.
+        """
+        logger.info(f"[DetailedParts] Engrave change: idx={part_index}, len={engraving_length_mm:.2f}mm, "
+                   f"layers={selected_layers}")
+
+        # Znajdź detal po indeksie lub po ścieżce pliku
+        idx = part_index
+        if idx is None:
+            # Fallback: szukaj po filepath
+            for i, part in enumerate(self.parts_data):
+                if part.get('filepath') == filepath:
+                    idx = i
+                    break
+
+        if idx is not None and 0 <= idx < len(self.parts_data):
+            part = self.parts_data[idx]
+            old_engrave = part.get('engraving_len', 0)
+
+            # Aktualizuj długość graweru
+            part['engraving_len'] = engraving_length_mm
+            part['engrave_layers'] = selected_layers  # Zapamiętaj wybrane warstwy
+
+            logger.info(f"[DetailedParts] Part '{part.get('name')}' engrave: {old_engrave:.2f} -> {engraving_length_mm:.2f} mm")
+
+            # Przelicz koszty dla tego detalu
+            self._recalculate_part_base(idx)
+            self._update_part_in_tree(idx)
+            self._update_summary()
+
+            # Powiadom o zmianach
+            if self.on_parts_change:
+                self.on_parts_change(self.parts_data)
+        else:
+            logger.warning(f"[DetailedParts] Part not found for engrave update: idx={part_index}, filepath={filepath}")
 
     # === MATERIAL PRICES, SPEEDS & DENSITIES ===
     # DEPRECATED: Te stale to fallback - glowne zrodlo danych to PricingDataCache!

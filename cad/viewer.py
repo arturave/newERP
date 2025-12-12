@@ -12,6 +12,84 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Kolory przycisków toggle
+TOGGLE_ACTIVE_COLOR = "#2d5a2d"    # Zielony - aktywny
+TOGGLE_INACTIVE_COLOR = "#333333"  # Ciemnoszary - nieaktywny
+
+
+class ToolTip:
+    """Prosty tooltip dla widgetów Tkinter/CTk"""
+
+    def __init__(self, widget, text: str, delay: int = 500):
+        """
+        Args:
+            widget: Widget do którego przypisany jest tooltip
+            text: Tekst tooltipa
+            delay: Opóźnienie w ms przed pokazaniem
+        """
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tooltip_window = None
+        self.scheduled_id = None
+
+        widget.bind("<Enter>", self._on_enter)
+        widget.bind("<Leave>", self._on_leave)
+        widget.bind("<ButtonPress>", self._on_leave)
+
+    def _on_enter(self, event=None):
+        """Zaplanuj pokazanie tooltipa"""
+        self._cancel_scheduled()
+        self.scheduled_id = self.widget.after(self.delay, self._show_tooltip)
+
+    def _on_leave(self, event=None):
+        """Ukryj tooltip"""
+        self._cancel_scheduled()
+        self._hide_tooltip()
+
+    def _cancel_scheduled(self):
+        """Anuluj zaplanowane pokazanie"""
+        if self.scheduled_id:
+            self.widget.after_cancel(self.scheduled_id)
+            self.scheduled_id = None
+
+    def _show_tooltip(self):
+        """Pokaż tooltip"""
+        if self.tooltip_window:
+            return
+
+        # Pozycja - poniżej widgetu
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        # Utwórz okno tooltipa
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        # Etykieta z tekstem
+        label = tk.Label(
+            tw, text=self.text,
+            background="#ffffe0",  # Jasny żółty
+            foreground="#000000",
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=("Segoe UI", 9),
+            padx=6, pady=3
+        )
+        label.pack()
+
+        # Wycentruj względem pozycji x
+        tw.update_idletasks()
+        width = tw.winfo_width()
+        tw.wm_geometry(f"+{x - width // 2}+{y}")
+
+    def _hide_tooltip(self):
+        """Ukryj tooltip"""
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
 try:
     import customtkinter as ctk
     HAS_CTK = True
@@ -22,15 +100,27 @@ except ImportError:
 from .canvas import CADCanvas
 from .tools.dimension import DimensionTool
 
-# Import core.dxf
+# Import DXF readers
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Primary: dxfgrabber reader (proven 100% accurate)
+try:
+    from .dxf_grabber_reader import DXFGrabberReader, SimplePart
+    HAS_DXFGRABBER = True
+except ImportError:
+    DXFGrabberReader = None
+    SimplePart = None
+    HAS_DXFGRABBER = False
+
+# Fallback: core.dxf reader
 try:
     from core.dxf import UnifiedDXFReader, DXFPart
+    HAS_UNIFIED = True
 except ImportError:
     UnifiedDXFReader = None
     DXFPart = None
+    HAS_UNIFIED = False
 
 
 class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
@@ -55,6 +145,8 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
         filepath: str = None,
         part: 'DXFPart' = None,
         on_close: Callable = None,
+        on_engrave_change: Callable = None,
+        part_index: int = None,
         **kwargs
     ):
         """
@@ -63,6 +155,9 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
             filepath: Ścieżka do pliku DXF do otwarcia
             part: DXFPart do wyświetlenia (alternatywa dla filepath)
             on_close: Callback przy zamknięciu okna
+            on_engrave_change: Callback przy zmianie wyboru warstw grawerowania
+                               Signature: on_engrave_change(filepath, engraving_length_mm, selected_layers)
+            part_index: Indeks detalu w liście (opcjonalny, dla callback)
         """
         super().__init__(parent, **kwargs)
 
@@ -70,10 +165,21 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
         self.geometry("1200x800")
 
         # Stan
-        self._part: Optional['DXFPart'] = None
+        self._part = None  # SimplePart or DXFPart
         self._filepath: str = ""
-        self._reader = UnifiedDXFReader() if UnifiedDXFReader else None
+        # Use dxfgrabber as primary reader (proven 100% accurate)
+        if HAS_DXFGRABBER:
+            self._reader = DXFGrabberReader()
+            logger.info("Using DXFGrabberReader (primary)")
+        elif HAS_UNIFIED:
+            self._reader = UnifiedDXFReader()
+            logger.info("Using UnifiedDXFReader (fallback)")
+        else:
+            self._reader = None
+            logger.warning("No DXF reader available!")
         self._on_close = on_close
+        self._on_engrave_change = on_engrave_change
+        self._part_index = part_index
         self._modified = False
 
         # UI
@@ -112,104 +218,126 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
         # Narzędzie wymiarowania
         self._dimension_tool = DimensionTool(self._canvas)
 
+        # Zarejestruj callback do przerysowywania wymiarów po zoom/pan
+        self._canvas.add_redraw_callback(self._dimension_tool.redraw_all)
+
         # Info panel (prawa strona)
         self._setup_info_panel()
 
         # Status bar
         self._setup_statusbar()
 
-        # Bind mouse move dla status bar
-        self._canvas.bind("<Motion>", self._on_mouse_move)
+        # Motion callback dla status bar (NIE nadpisuj bindu!)
+        self._canvas.add_motion_callback(self._on_canvas_motion)
 
     def _setup_toolbar(self):
-        """Skonfiguruj toolbar"""
+        """Skonfiguruj toolbar z ikonami i tooltipami"""
         self._toolbar = ctk.CTkFrame(self._main_frame, height=40) if HAS_CTK else ttk.Frame(self._main_frame)
         self._toolbar.pack(fill=tk.X, padx=5, pady=(5, 0))
         self._toolbar.pack_propagate(False)
 
-        # Przyciski
-        btn_style = {"width": 80, "height": 28} if HAS_CTK else {}
+        # Lista tooltipów (przechowujemy referencje)
+        self._tooltips = []
+
+        # Style dla przycisków z ikonami
+        icon_btn = {"width": 36, "height": 28, "font": ("Segoe UI Symbol", 14)} if HAS_CTK else {}
 
         # File section
         if HAS_CTK:
-            ctk.CTkButton(self._toolbar, text="Open", command=self._on_open, **btn_style).pack(side=tk.LEFT, padx=2)
-            ctk.CTkButton(self._toolbar, text="Save", command=self._on_save, **btn_style).pack(side=tk.LEFT, padx=2)
+            btn_open = ctk.CTkButton(self._toolbar, text="\U0001F4C2", command=self._on_open, **icon_btn)
+            btn_open.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_open, "Otwórz plik DXF (Ctrl+O)"))
+
+            btn_save = ctk.CTkButton(self._toolbar, text="\U0001F4BE", command=self._on_save, **icon_btn)
+            btn_save.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_save, "Zapisz plik DXF (Ctrl+S)"))
         else:
-            ttk.Button(self._toolbar, text="Open", command=self._on_open).pack(side=tk.LEFT, padx=2)
-            ttk.Button(self._toolbar, text="Save", command=self._on_save).pack(side=tk.LEFT, padx=2)
+            btn_open = ttk.Button(self._toolbar, text="Open", command=self._on_open)
+            btn_open.pack(side=tk.LEFT, padx=2)
+            btn_save = ttk.Button(self._toolbar, text="Save", command=self._on_save)
+            btn_save.pack(side=tk.LEFT, padx=2)
 
         # Separator
-        sep = ttk.Separator(self._toolbar, orient=tk.VERTICAL)
-        sep.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        ttk.Separator(self._toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=5)
 
         # Zoom section
         if HAS_CTK:
-            ctk.CTkButton(self._toolbar, text="Fit", command=self._on_zoom_fit, **btn_style).pack(side=tk.LEFT, padx=2)
-            ctk.CTkButton(self._toolbar, text="Zoom +", command=self._on_zoom_in, **btn_style).pack(side=tk.LEFT, padx=2)
-            ctk.CTkButton(self._toolbar, text="Zoom -", command=self._on_zoom_out, **btn_style).pack(side=tk.LEFT, padx=2)
+            btn_fit = ctk.CTkButton(self._toolbar, text="\U0001F50D", command=self._on_zoom_fit, **icon_btn)
+            btn_fit.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_fit, "Dopasuj do okna (Home)"))
+
+            btn_zin = ctk.CTkButton(self._toolbar, text="+", command=self._on_zoom_in, **icon_btn)
+            btn_zin.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_zin, "Powiększ (Ctrl++)"))
+
+            btn_zout = ctk.CTkButton(self._toolbar, text="-", command=self._on_zoom_out, **icon_btn)
+            btn_zout.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_zout, "Pomniejsz (Ctrl+-)"))
         else:
             ttk.Button(self._toolbar, text="Fit", command=self._on_zoom_fit).pack(side=tk.LEFT, padx=2)
-            ttk.Button(self._toolbar, text="Zoom +", command=self._on_zoom_in).pack(side=tk.LEFT, padx=2)
-            ttk.Button(self._toolbar, text="Zoom -", command=self._on_zoom_out).pack(side=tk.LEFT, padx=2)
+            ttk.Button(self._toolbar, text="+", command=self._on_zoom_in).pack(side=tk.LEFT, padx=2)
+            ttk.Button(self._toolbar, text="-", command=self._on_zoom_out).pack(side=tk.LEFT, padx=2)
 
         # Separator
-        sep2 = ttk.Separator(self._toolbar, orient=tk.VERTICAL)
-        sep2.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        ttk.Separator(self._toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=5)
 
-        # Grid checkbox
+        # Grid toggle button
         self._grid_var = tk.BooleanVar(value=True)
         if HAS_CTK:
-            ctk.CTkCheckBox(
-                self._toolbar, text="Grid",
-                variable=self._grid_var,
-                command=self._on_grid_toggle
-            ).pack(side=tk.LEFT, padx=5)
+            self._grid_btn = ctk.CTkButton(
+                self._toolbar, text="#", command=self._on_grid_toggle,
+                fg_color=TOGGLE_ACTIVE_COLOR, **icon_btn
+            )
         else:
-            ttk.Checkbutton(
-                self._toolbar, text="Grid",
-                variable=self._grid_var,
-                command=self._on_grid_toggle
-            ).pack(side=tk.LEFT, padx=5)
+            self._grid_btn = ttk.Button(self._toolbar, text="#", command=self._on_grid_toggle)
+        self._grid_btn.pack(side=tk.LEFT, padx=2)
+        self._tooltips.append(ToolTip(self._grid_btn, "Siatka wł/wył"))
 
-        # Snap checkbox
+        # Snap toggle button
         self._snap_var = tk.BooleanVar(value=True)
         if HAS_CTK:
-            ctk.CTkCheckBox(
-                self._toolbar, text="Snap",
-                variable=self._snap_var,
-                command=self._on_snap_toggle
-            ).pack(side=tk.LEFT, padx=5)
+            self._snap_btn = ctk.CTkButton(
+                self._toolbar, text="\U0001F4CD", command=self._on_snap_toggle,
+                fg_color=TOGGLE_ACTIVE_COLOR, **icon_btn
+            )
         else:
-            ttk.Checkbutton(
-                self._toolbar, text="Snap",
-                variable=self._snap_var,
-                command=self._on_snap_toggle
-            ).pack(side=tk.LEFT, padx=5)
+            self._snap_btn = ttk.Button(self._toolbar, text="Snap", command=self._on_snap_toggle)
+        self._snap_btn.pack(side=tk.LEFT, padx=2)
+        self._tooltips.append(ToolTip(self._snap_btn, "Przyciąganie do punktów wł/wył"))
 
         # Separator
-        sep3 = ttk.Separator(self._toolbar, orient=tk.VERTICAL)
-        sep3.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        ttk.Separator(self._toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=5)
 
-        # Wymiarowanie section
+        # Dimension section
+        self._dim_active = False  # Stan przycisku wymiarowania
         if HAS_CTK:
-            ctk.CTkButton(self._toolbar, text="Auto Dim", command=self._on_auto_dimension, **btn_style).pack(side=tk.LEFT, padx=2)
-            ctk.CTkButton(self._toolbar, text="Dimension", command=self._on_dimension_tool, **btn_style).pack(side=tk.LEFT, padx=2)
-            ctk.CTkButton(self._toolbar, text="Clear Dim", command=self._on_clear_dimensions, **btn_style).pack(side=tk.LEFT, padx=2)
+            btn_auto = ctk.CTkButton(self._toolbar, text="Auto", command=self._on_auto_dimension, width=50, height=28)
+            btn_auto.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_auto, "Automatyczne wymiary bbox"))
+
+            self._dim_btn = ctk.CTkButton(
+                self._toolbar, text="\U0001F4CF", command=self._on_dimension_tool,
+                fg_color=TOGGLE_INACTIVE_COLOR, **icon_btn
+            )
+            self._dim_btn.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(self._dim_btn, "Wymiarowanie ręczne wł/wył"))
+
+            btn_clear = ctk.CTkButton(self._toolbar, text="\U0001F5D1", command=self._on_clear_dimensions, **icon_btn)
+            btn_clear.pack(side=tk.LEFT, padx=2)
+            self._tooltips.append(ToolTip(btn_clear, "Usuń wszystkie wymiary"))
         else:
-            ttk.Button(self._toolbar, text="Auto Dim", command=self._on_auto_dimension).pack(side=tk.LEFT, padx=2)
-            ttk.Button(self._toolbar, text="Dimension", command=self._on_dimension_tool).pack(side=tk.LEFT, padx=2)
-            ttk.Button(self._toolbar, text="Clear Dim", command=self._on_clear_dimensions).pack(side=tk.LEFT, padx=2)
+            ttk.Button(self._toolbar, text="Auto", command=self._on_auto_dimension).pack(side=tk.LEFT, padx=2)
+            self._dim_btn = ttk.Button(self._toolbar, text="Dim", command=self._on_dimension_tool)
+            self._dim_btn.pack(side=tk.LEFT, padx=2)
+            ttk.Button(self._toolbar, text="Clear", command=self._on_clear_dimensions).pack(side=tk.LEFT, padx=2)
 
         # Zoom label (prawa strona)
-        self._zoom_label = ctk.CTkLabel(self._toolbar, text="100%") if HAS_CTK else ttk.Label(self._toolbar, text="100%")
+        self._zoom_label = ctk.CTkLabel(self._toolbar, text="100%", font=("Consolas", 11)) if HAS_CTK else ttk.Label(self._toolbar, text="100%")
         self._zoom_label.pack(side=tk.RIGHT, padx=10)
-
-        zoom_text = ctk.CTkLabel(self._toolbar, text="Zoom:") if HAS_CTK else ttk.Label(self._toolbar, text="Zoom:")
-        zoom_text.pack(side=tk.RIGHT)
 
     def _setup_info_panel(self):
         """Skonfiguruj panel informacyjny"""
-        self._info_frame = ctk.CTkFrame(self._center_frame, width=250) if HAS_CTK else ttk.Frame(self._center_frame)
+        self._info_frame = ctk.CTkFrame(self._center_frame, width=280) if HAS_CTK else ttk.Frame(self._center_frame)
         self._info_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         self._info_frame.pack_propagate(False)
 
@@ -223,13 +351,13 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
         # Info text
         self._info_text = tk.Text(
             self._info_frame,
-            width=30, height=20,
+            width=30, height=12,
             bg="#2d2d2d" if HAS_CTK else "white",
             fg="white" if HAS_CTK else "black",
             font=("Consolas", 10),
             state=tk.DISABLED
         )
-        self._info_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self._info_text.pack(fill=tk.X, padx=5, pady=5)
 
         # Layers section
         layers_label = ctk.CTkLabel(
@@ -238,8 +366,67 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
         ) if HAS_CTK else ttk.Label(self._info_frame, text="Layers", font=("Arial", 12, "bold"))
         layers_label.pack(pady=(10, 5))
 
-        self._layers_frame = ctk.CTkScrollableFrame(self._info_frame, height=150) if HAS_CTK else ttk.Frame(self._info_frame)
+        self._layers_frame = ctk.CTkScrollableFrame(self._info_frame, height=120) if HAS_CTK else ttk.Frame(self._info_frame)
         self._layers_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # === ENGRAVING SECTION ===
+        self._setup_engraving_section()
+
+    def _setup_engraving_section(self):
+        """Skonfiguruj sekcję wyboru warstwy grawerowania"""
+        # Separator
+        sep = ttk.Separator(self._info_frame, orient=tk.HORIZONTAL)
+        sep.pack(fill=tk.X, padx=5, pady=10)
+
+        # Tytuł sekcji
+        engrave_title = ctk.CTkLabel(
+            self._info_frame, text="Engraving Selection",
+            font=("Arial", 12, "bold"), text_color="#f59e0b"
+        ) if HAS_CTK else ttk.Label(self._info_frame, text="Engraving Selection", font=("Arial", 12, "bold"))
+        engrave_title.pack(pady=(0, 5))
+
+        # Info o auto-detekcji
+        auto_info = ctk.CTkLabel(
+            self._info_frame, text="Select layers to mark as engraving:",
+            font=("Arial", 9), text_color="#888888"
+        ) if HAS_CTK else ttk.Label(self._info_frame, text="Select layers to mark as engraving:")
+        auto_info.pack(pady=(0, 5))
+
+        # Scrollable frame dla checkboxów warstw
+        self._engrave_layers_frame = ctk.CTkScrollableFrame(
+            self._info_frame, height=100,
+            fg_color="#1a1a1a" if HAS_CTK else None
+        ) if HAS_CTK else ttk.Frame(self._info_frame)
+        self._engrave_layers_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Etykieta z sumaryczną długością graweru
+        self._engrave_length_frame = ctk.CTkFrame(self._info_frame, fg_color="#2d2d2d") if HAS_CTK else ttk.Frame(self._info_frame)
+        self._engrave_length_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        engrave_icon = ctk.CTkLabel(
+            self._engrave_length_frame, text="Engraving:",
+            font=("Arial", 10, "bold"), text_color="#f59e0b"
+        ) if HAS_CTK else ttk.Label(self._engrave_length_frame, text="Engraving:")
+        engrave_icon.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self._engrave_length_label = ctk.CTkLabel(
+            self._engrave_length_frame, text="0.00 mm (0.00 m)",
+            font=("Consolas", 11), text_color="#22c55e"
+        ) if HAS_CTK else ttk.Label(self._engrave_length_frame, text="0.00 mm (0.00 m)")
+        self._engrave_length_label.pack(side=tk.LEFT, padx=5, pady=5)
+
+        # Przycisk "Zastosuj" do zatwierdzenia wyboru
+        self._apply_engrave_btn = ctk.CTkButton(
+            self._info_frame, text="Apply Engraving Selection",
+            command=self._on_apply_engraving,
+            fg_color="#f59e0b", hover_color="#d97706",
+            height=30
+        ) if HAS_CTK else ttk.Button(self._info_frame, text="Apply Engraving Selection", command=self._on_apply_engraving)
+        self._apply_engrave_btn.pack(fill=tk.X, padx=5, pady=5)
+
+        # Stan wyboru warstw do grawerowania
+        self._engrave_layer_vars = {}  # {layer_name: BooleanVar}
+        self._layer_lengths = {}  # {layer_name: length_mm}
 
     def _setup_statusbar(self):
         """Skonfiguruj status bar"""
@@ -337,7 +524,22 @@ class CAD2DViewer(ctk.CTkToplevel if HAS_CTK else tk.Toplevel):
         self._info_text.delete("1.0", tk.END)
 
         if self._part:
-            info = f"""Name: {self._part.name}
+            # Handle SimplePart (dxfgrabber) vs DXFPart (core.dxf)
+            if hasattr(self._part, 'paths'):
+                # SimplePart
+                info = f"""Name: {self._part.name}
+
+Dimensions:
+  Width:  {self._part.width:.2f} mm
+  Height: {self._part.height:.2f} mm
+
+Paths: {self._part.path_count}
+
+Reader: DXFGrabberReader
+"""
+            else:
+                # DXFPart
+                info = f"""Name: {self._part.name}
 
 Dimensions:
   Width:  {self._part.width:.2f} mm
@@ -357,6 +559,8 @@ Quantity: {self._part.quantity}
 
 Contour points: {len(self._part.outer_contour.points) if self._part.outer_contour else 0}
 Holes: {len(self._part.holes)}
+
+Reader: UnifiedDXFReader
 """
             self._info_text.insert("1.0", info)
 
@@ -369,6 +573,10 @@ Holes: {len(self._part.holes)}
             widget.destroy()
 
         if not self._part:
+            return
+
+        # SimplePart doesn't have layers dict
+        if not hasattr(self._part, 'layers'):
             return
 
         for name, layer in self._part.layers.items():
@@ -402,6 +610,188 @@ Holes: {len(self._part.holes)}
             # Nazwa
             label = ctk.CTkLabel(frame, text=f"{name} ({layer.entity_count})") if HAS_CTK else ttk.Label(frame, text=f"{name} ({layer.entity_count})")
             label.pack(side=tk.LEFT, padx=5)
+
+        # Po aktualizacji warstw, aktualizuj też panel grawerowania
+        self._update_engrave_layers()
+
+    def _update_engrave_layers(self):
+        """Aktualizuj panel wyboru warstw grawerowania"""
+        # Wyczyść poprzednie checkboxy
+        for widget in self._engrave_layers_frame.winfo_children():
+            widget.destroy()
+
+        self._engrave_layer_vars.clear()
+        self._layer_lengths.clear()
+
+        if not self._part:
+            self._engrave_length_label.configure(text="0.00 mm (0.00 m)")
+            return
+
+        # Wczytaj ustawienia słów kluczowych graweru
+        marking_keywords = self._get_marking_keywords()
+
+        # Oblicz długości dla każdej warstwy
+        if hasattr(self._part, 'paths'):
+            # SimplePart - grupuj paths po warstwie
+            layer_paths = {}
+            for path in self._part.paths:
+                layer = path.layer
+                if layer not in layer_paths:
+                    layer_paths[layer] = []
+                layer_paths[layer].append(path)
+
+            for layer_name, paths in sorted(layer_paths.items()):
+                # Oblicz długość ścieżek w tej warstwie
+                length_mm = self._calculate_paths_length(paths)
+                self._layer_lengths[layer_name] = length_mm
+
+                # Sprawdź czy warstwa jest automatycznie wykryta jako grawer
+                is_auto_engrave = self._is_marking_layer(layer_name, marking_keywords)
+
+                # Utwórz wiersz dla warstwy
+                frame = ctk.CTkFrame(self._engrave_layers_frame, fg_color="transparent") if HAS_CTK else ttk.Frame(self._engrave_layers_frame)
+                frame.pack(fill=tk.X, pady=2)
+
+                # Checkbox do wyboru jako grawer
+                var = tk.BooleanVar(value=is_auto_engrave)
+                self._engrave_layer_vars[layer_name] = var
+
+                if HAS_CTK:
+                    cb = ctk.CTkCheckBox(
+                        frame, text="",
+                        variable=var,
+                        width=20,
+                        command=self._on_engrave_selection_change,
+                        fg_color="#f59e0b", hover_color="#d97706"
+                    )
+                else:
+                    cb = ttk.Checkbutton(
+                        frame, text="",
+                        variable=var,
+                        command=self._on_engrave_selection_change
+                    )
+                cb.pack(side=tk.LEFT)
+
+                # Nazwa warstwy
+                color = "#f59e0b" if is_auto_engrave else "#ffffff"
+                name_label = ctk.CTkLabel(
+                    frame, text=layer_name,
+                    font=("Arial", 10), text_color=color
+                ) if HAS_CTK else ttk.Label(frame, text=layer_name)
+                name_label.pack(side=tk.LEFT, padx=5)
+
+                # Długość
+                length_text = f"{length_mm:.1f} mm"
+                length_label = ctk.CTkLabel(
+                    frame, text=length_text,
+                    font=("Consolas", 9), text_color="#888888"
+                ) if HAS_CTK else ttk.Label(frame, text=length_text)
+                length_label.pack(side=tk.RIGHT, padx=5)
+
+        elif hasattr(self._part, 'layers'):
+            # DXFPart z layers dict - placeholder (rzadko używane)
+            for name in sorted(self._part.layers.keys()):
+                self._layer_lengths[name] = 0.0
+                var = tk.BooleanVar(value=False)
+                self._engrave_layer_vars[name] = var
+
+        # Aktualizuj sumaryczną długość
+        self._on_engrave_selection_change()
+
+    def _calculate_paths_length(self, paths) -> float:
+        """Oblicz sumaryczną długość ścieżek"""
+        import math
+        total_length = 0.0
+        for path in paths:
+            points = path.points
+            for i in range(len(points) - 1):
+                p1, p2 = points[i], points[i + 1]
+                dx = p2[0] - p1[0]
+                dy = p2[1] - p1[1]
+                total_length += math.sqrt(dx * dx + dy * dy)
+            # Jeśli zamknięta, dodaj odcinek powrotny
+            if path.is_closed and len(points) >= 2:
+                p1, p2 = points[-1], points[0]
+                dx = p2[0] - p1[0]
+                dy = p2[1] - p1[1]
+                total_length += math.sqrt(dx * dx + dy * dy)
+        return total_length
+
+    def _get_marking_keywords(self) -> set:
+        """Pobierz słowa kluczowe graweru z ustawień"""
+        try:
+            from orders.gui.settings_dialog import load_layer_settings
+            settings = load_layer_settings()
+            return set(kw.lower() for kw in settings.get('marking_keywords', []))
+        except ImportError:
+            # Domyślne słowa kluczowe
+            return {'grawer', 'marking', 'opis', 'text', 'engrave', 'mark', 'sign'}
+
+    def _is_marking_layer(self, layer_name: str, keywords: set) -> bool:
+        """Sprawdź czy warstwa to warstwa grawerowania"""
+        layer_lower = layer_name.lower()
+        for keyword in keywords:
+            if keyword in layer_lower:
+                return True
+        return False
+
+    def _on_engrave_selection_change(self):
+        """Callback przy zmianie wyboru warstwy grawerowania"""
+        total_length = 0.0
+        for layer_name, var in self._engrave_layer_vars.items():
+            if var.get():
+                total_length += self._layer_lengths.get(layer_name, 0.0)
+
+        # Aktualizuj etykietę
+        length_m = total_length / 1000.0
+        self._engrave_length_label.configure(
+            text=f"{total_length:.2f} mm ({length_m:.3f} m)"
+        )
+
+    def _on_apply_engraving(self):
+        """Zastosuj wybór warstw grawerowania"""
+        # Oblicz całkowitą długość wybranych warstw
+        total_length = 0.0
+        selected_layers = []
+        for layer_name, var in self._engrave_layer_vars.items():
+            if var.get():
+                total_length += self._layer_lengths.get(layer_name, 0.0)
+                selected_layers.append(layer_name)
+
+        logger.info(f"[CADViewer] Apply engraving: {total_length:.2f} mm, layers: {selected_layers}")
+
+        # Wywołaj callback jeśli ustawiony
+        if self._on_engrave_change:
+            try:
+                self._on_engrave_change(
+                    filepath=self._filepath,
+                    engraving_length_mm=total_length,
+                    selected_layers=selected_layers,
+                    part_index=self._part_index
+                )
+                messagebox.showinfo("Success", f"Engraving updated:\n{total_length:.2f} mm ({total_length/1000:.3f} m)")
+            except Exception as e:
+                logger.error(f"Error in engrave callback: {e}")
+                messagebox.showerror("Error", f"Could not update engraving: {e}")
+        else:
+            messagebox.showinfo("Info", f"Engraving length: {total_length:.2f} mm\n\n"
+                               f"Selected layers:\n" + "\n".join(f"  - {l}" for l in selected_layers))
+
+    def get_engraving_info(self) -> dict:
+        """Pobierz informacje o wybranym grawerowaniu"""
+        total_length = 0.0
+        selected_layers = []
+        for layer_name, var in self._engrave_layer_vars.items():
+            if var.get():
+                total_length += self._layer_lengths.get(layer_name, 0.0)
+                selected_layers.append(layer_name)
+
+        return {
+            'engraving_length_mm': total_length,
+            'selected_layers': selected_layers,
+            'all_layers': list(self._layer_lengths.keys()),
+            'layer_lengths': dict(self._layer_lengths)
+        }
 
     def _update_status(self):
         """Aktualizuj status bar"""
@@ -469,41 +859,53 @@ Holes: {len(self._part.holes)}
 
     def _on_grid_toggle(self):
         """Włącz/wyłącz siatkę"""
+        self._grid_var.set(not self._grid_var.get())
         self._canvas.set_grid_visible(self._grid_var.get())
+        # Update button color (Active/Inactive)
+        if HAS_CTK:
+            color = TOGGLE_ACTIVE_COLOR if self._grid_var.get() else TOGGLE_INACTIVE_COLOR
+            self._grid_btn.configure(fg_color=color)
 
     def _on_snap_toggle(self):
         """Włącz/wyłącz snap"""
+        self._snap_var.set(not self._snap_var.get())
         self._canvas.set_snap_enabled(self._snap_var.get())
+        # Update button color (Active/Inactive)
+        if HAS_CTK:
+            color = TOGGLE_ACTIVE_COLOR if self._snap_var.get() else TOGGLE_INACTIVE_COLOR
+            self._snap_btn.configure(fg_color=color)
 
     def _on_auto_dimension(self):
         """Automatyczne wymiarowanie (bbox + otwory)"""
         if not self._part:
-            messagebox.showwarning("Warning", "No part loaded")
             return
 
-        # Wymiarowanie bbox
-        self._dimension_tool.auto_dimension_bbox(self._part)
+        # 1) Zawsze wymiaruj bounding box, jeśli są min/max
+        if hasattr(self._part, "min_x") and hasattr(self._part, "max_x"):
+            self._dimension_tool.auto_dimension_bbox(self._part)
 
-        # Wymiarowanie otworów (max 5)
-        if self._part.holes:
+        # 2) Otwory – tylko jeśli obiekt ma atrybut holes
+        if hasattr(self._part, "holes") and getattr(self._part, "holes", None):
             self._dimension_tool.auto_dimension_holes(self._part, max_holes=5)
 
         self._modified = True
-        messagebox.showinfo("Info", f"Added auto dimensions:\n- BBox (width + height)\n- {min(5, len(self._part.holes))} hole diameters")
 
     def _on_dimension_tool(self):
-        """Aktywuj ręczne wymiarowanie"""
+        """Aktywuj ręczne wymiarowanie (toggle)"""
         if not self._part:
-            messagebox.showwarning("Warning", "No part loaded")
             return
 
         # Toggle aktywacji
-        if self._dimension_tool._active:
-            self._dimension_tool.deactivate()
-            messagebox.showinfo("Info", "Dimension tool deactivated")
-        else:
+        self._dim_active = not self._dim_active
+        if self._dim_active:
             self._dimension_tool.activate(mode="linear")
-            messagebox.showinfo("Info", "Dimension tool activated\n\nClick two points to add a dimension.\nPress Escape to cancel.")
+        else:
+            self._dimension_tool.deactivate()
+
+        # Update button color (Active/Inactive)
+        if HAS_CTK:
+            color = TOGGLE_ACTIVE_COLOR if self._dim_active else TOGGLE_INACTIVE_COLOR
+            self._dim_btn.configure(fg_color=color)
 
     def _on_clear_dimensions(self):
         """Wyczyść wszystkie wymiary"""
@@ -517,12 +919,16 @@ Holes: {len(self._part.holes)}
             self._part.layers[layer_name].visible = var.get()
             self._canvas.redraw()
 
-    def _on_mouse_move(self, event):
-        """Aktualizuj pozycję myszy w status bar"""
-        wx, wy = self._canvas.screen_to_world(event.x, event.y)
+    def _on_canvas_motion(self, event, wx: float, wy: float, snapped_x: float, snapped_y: float):
+        """
+        Motion callback - aktualizuj pozycję w status bar.
 
+        Args:
+            event: Tkinter event
+            wx, wy: World coordinates (bez snap)
+            snapped_x, snapped_y: World coordinates (ze snap jeśli aktywny)
+        """
         # Pokaż pozycję snap jeśli jest aktywny
-        snapped_x, snapped_y = self._canvas.get_snapped_position(wx, wy)
         if (snapped_x, snapped_y) != (wx, wy):
             self._pos_label.configure(text=f"X: {snapped_x:.2f}  Y: {snapped_y:.2f} [SNAP]")
         else:
@@ -553,7 +959,9 @@ Holes: {len(self._part.holes)}
 def open_cad_viewer(
     parent=None,
     filepath: str = None,
-    part: 'DXFPart' = None
+    part: 'DXFPart' = None,
+    on_engrave_change: Callable = None,
+    part_index: int = None
 ) -> CAD2DViewer:
     """
     Otwórz okno CAD Viewer.
@@ -562,11 +970,20 @@ def open_cad_viewer(
         parent: Widget rodzica
         filepath: Ścieżka do pliku DXF
         part: DXFPart do wyświetlenia
+        on_engrave_change: Callback przy zmianie wyboru warstw grawerowania
+                           Signature: on_engrave_change(filepath, engraving_length_mm, selected_layers, part_index)
+        part_index: Indeks detalu w liście (dla callback)
 
     Returns:
         Instancja CAD2DViewer
     """
-    viewer = CAD2DViewer(parent, filepath=filepath, part=part)
+    viewer = CAD2DViewer(
+        parent,
+        filepath=filepath,
+        part=part,
+        on_engrave_change=on_engrave_change,
+        part_index=part_index
+    )
     return viewer
 
 
