@@ -13,7 +13,7 @@ Funkcje:
 """
 
 import customtkinter as ctk
-from tkinter import ttk, messagebox, filedialog, Canvas
+from tkinter import ttk, messagebox, filedialog, Canvas, Menu
 from typing import List, Dict, Optional, Callable, Any, Tuple
 from pathlib import Path
 import logging
@@ -585,6 +585,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
         # Flaga: czy nesting zostal wykonany (alokacja dostepna dopiero po nestingu)
         self._nesting_completed = False
+        self.nesting_results = {}  # Wyniki nestingu do modeli alokacji
 
         # Załaduj cenniki z PricingTables
         self.pricing_tables = None
@@ -675,14 +676,16 @@ class DetailedPartsPanel(ctk.CTkFrame):
         # Spacer
         ctk.CTkLabel(filter_frame, text="").pack(side="left", expand=True)
 
-        # === ACTION BUTTONS ===
+        # === ACTION BUTTONS (piktogramy) ===
+        # + : Dodaj nowy detal
         btn_add = ctk.CTkButton(
-            filter_frame, text="+ Dodaj", width=60, height=24,
+            filter_frame, text="+", width=28, height=24,
             fg_color=Theme.ACCENT_SUCCESS, hover_color="#1a9f4a",
-            font=ctk.CTkFont(size=10), command=self._add_part
+            font=ctk.CTkFont(size=14, weight="bold"), command=self._add_part
         )
         btn_add.pack(side="left", padx=2)
 
+        # + 3D : Dodaj model 3D (bez zmiany)
         btn_add_3d = ctk.CTkButton(
             filter_frame, text="+ 3D", width=45, height=24,
             fg_color=Theme.ACCENT_INFO, hover_color="#0599b8",
@@ -690,35 +693,39 @@ class DetailedPartsPanel(ctk.CTkFrame):
         )
         btn_add_3d.pack(side="left", padx=2)
 
+        # Folder icon : Z katalogu produktow
         btn_from_catalog = ctk.CTkButton(
-            filter_frame, text="Z katalogu", width=70, height=24,
+            filter_frame, text="\u2261", width=28, height=24,
             fg_color="#6366f1", hover_color="#5855e0",
-            font=ctk.CTkFont(size=10), command=self._open_catalog_picker
+            font=ctk.CTkFont(size=14), command=self._open_catalog_picker
         )
         btn_from_catalog.pack(side="left", padx=2)
 
+        # Copy icon : Duplikuj
         btn_duplicate = ctk.CTkButton(
-            filter_frame, text="Dup", width=40, height=24,
+            filter_frame, text="\u2398", width=28, height=24,
             fg_color=Theme.ACCENT_PRIMARY, hover_color="#7c4fe0",
-            font=ctk.CTkFont(size=10), command=self._duplicate_part
+            font=ctk.CTkFont(size=12), command=self._duplicate_part
         )
         btn_duplicate.pack(side="left", padx=2)
 
+        # X : Usun
         btn_delete = ctk.CTkButton(
-            filter_frame, text="Usun", width=45, height=24,
+            filter_frame, text="\u2715", width=28, height=24,
             fg_color=Theme.ACCENT_DANGER, hover_color="#d93636",
-            font=ctk.CTkFont(size=10), command=self._delete_part
+            font=ctk.CTkFont(size=12), command=self._delete_part
         )
         btn_delete.pack(side="left", padx=2)
 
+        # Refresh icon : Przelicz
         btn_recalc = ctk.CTkButton(
-            filter_frame, text="Przelicz", width=60, height=24,
+            filter_frame, text="\u21bb", width=28, height=24,
             fg_color=Theme.ACCENT_WARNING, hover_color="#db8f0a",
-            font=ctk.CTkFont(size=10), command=self._recalculate_all
+            font=ctk.CTkFont(size=14), command=self._recalculate_all
         )
         btn_recalc.pack(side="left", padx=2)
 
-        # Przycisk do otwierania okna logu kosztow
+        # Log : bez zmiany
         btn_debug_log = ctk.CTkButton(
             filter_frame, text="Log", width=40, height=24,
             fg_color="#4a4a4a", hover_color="#5a5a5a",
@@ -778,6 +785,11 @@ class DetailedPartsPanel(ctk.CTkFrame):
 
         table_frame.grid_columnconfigure(0, weight=1)
         table_frame.grid_rowconfigure(0, weight=1)
+
+        # === CONTEXT MENU & BINDINGS ===
+        self._setup_context_menu()
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self.tree.bind("<Button-3>", self._show_context_menu)
 
         # === SUMMARY BAR ===
         summary_frame = ctk.CTkFrame(self, fg_color=Theme.BG_INPUT, height=25)
@@ -1695,6 +1707,92 @@ class DetailedPartsPanel(ctk.CTkFrame):
         # W przyszlosci - filtrowanie widocznych wierszy
         pass
 
+    # === CONTEXT MENU & DOUBLE-CLICK ===
+
+    def _setup_context_menu(self):
+        """Utworz menu kontekstowe dla listy detali"""
+        self.context_menu = Menu(self.tree, tearoff=0, bg="#2d2d2d", fg="#ffffff",
+                                 activebackground="#8b5cf6", activeforeground="#ffffff")
+        self.context_menu.add_command(label="Podglad CAD", command=self._context_preview_cad)
+        self.context_menu.add_command(label="Edycja CAD", command=self._context_edit_cad)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Usun", command=self._delete_part)
+
+    def _show_context_menu(self, event):
+        """Pokaz menu kontekstowe przy prawym kliknieciu"""
+        # Zaznacz wiersz pod kursorem
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.tree.focus(item)
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_double_click(self, event):
+        """Obsluga dwukliku - otwiera CAD 2D viewer"""
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+
+        idx = self._find_part_index(item)
+        if idx is None:
+            return
+
+        part = self.parts_data[idx]
+        filepath = part.get('filepath', '')
+
+        if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
+            self._open_cad_viewer(filepath)
+        else:
+            messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
+
+    def _context_preview_cad(self):
+        """Podglad CAD dla zaznaczonego detalu"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+
+        idx = self._find_part_index(selection[0])
+        if idx is None:
+            return
+
+        part = self.parts_data[idx]
+        filepath = part.get('filepath', '')
+
+        if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
+            self._open_cad_viewer(filepath, editable=False)
+        else:
+            messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
+
+    def _context_edit_cad(self):
+        """Edycja CAD dla zaznaczonego detalu"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+
+        idx = self._find_part_index(selection[0])
+        if idx is None:
+            return
+
+        part = self.parts_data[idx]
+        filepath = part.get('filepath', '')
+
+        if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
+            self._open_cad_viewer(filepath, editable=True)
+        else:
+            messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
+
+    def _open_cad_viewer(self, filepath: str, editable: bool = False):
+        """Otworz CAD 2D Viewer dla pliku DXF"""
+        try:
+            from cad import open_cad_viewer
+            open_cad_viewer(self.winfo_toplevel(), filepath=filepath)
+        except ImportError as e:
+            logger.warning(f"CAD viewer not available: {e}")
+            messagebox.showerror("Blad", "Modul CAD 2D Viewer nie jest dostepny")
+        except Exception as e:
+            logger.error(f"Error opening CAD viewer: {e}")
+            messagebox.showerror("Blad", f"Nie mozna otworzyc viewera: {e}")
+
     # === MATERIAL PRICES, SPEEDS & DENSITIES ===
     # DEPRECATED: Te stale to fallback - glowne zrodlo danych to PricingDataCache!
     # Patrz: core/pricing_cache.py
@@ -2127,6 +2225,17 @@ class DetailedPartsPanel(ctk.CTkFrame):
     def get_total_cost(self) -> float:
         """Pobierz calkowity koszt"""
         return sum(p.get('total_unit', 0) * p.get('quantity', 1) for p in self.parts_data)
+
+    def set_nesting_results(self, results: Dict):
+        """Ustaw wyniki nestingu dla modeli alokacji.
+
+        WAŻNE: Wyniki nestingu są wymagane dla poprawnego działania modeli alokacji
+        'Proporcjonalny' i 'Równy podział'. Bez nestingu te modele nie mają danych
+        o arkuszach i ich kosztach.
+        """
+        self.nesting_results = results or {}
+        self._nesting_completed = bool(results and results.get('sheets'))
+        logger.info(f"[DetailedParts] Nesting results set: {len(self.nesting_results.get('sheets', []))} sheets")
 
 
 # === TEST ===

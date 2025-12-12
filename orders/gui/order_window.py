@@ -21,7 +21,7 @@ import os
 import uuid
 import math
 import customtkinter as ctk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, filedialog, simpledialog, Menu
 from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -763,8 +763,10 @@ class PartsListPanel(ctk.CTkFrame):
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
-        # Double-click do edycji ilości
-        self.tree.bind('<Double-1>', self._edit_quantity)
+        # Context menu & bindings
+        self._setup_context_menu()
+        self.tree.bind('<Double-1>', self._on_double_click)
+        self.tree.bind('<Button-3>', self._show_context_menu)
 
     def _add_files(self):
         """Dodaj pliki DXF"""
@@ -974,6 +976,84 @@ class PartsListPanel(ctk.CTkFrame):
             ))
 
         self.lbl_count.configure(text=f"({len(self.parts)} pozycji)")
+
+    # === CONTEXT MENU & DOUBLE-CLICK ===
+
+    def _setup_context_menu(self):
+        """Utworz menu kontekstowe dla listy detali"""
+        self.context_menu = Menu(self.tree, tearoff=0, bg="#2d2d2d", fg="#ffffff",
+                                 activebackground="#8b5cf6", activeforeground="#ffffff")
+        self.context_menu.add_command(label="Podglad CAD", command=self._context_preview_cad)
+        self.context_menu.add_command(label="Edycja CAD", command=self._context_edit_cad)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Usun", command=self._remove_selected)
+
+    def _show_context_menu(self, event):
+        """Pokaz menu kontekstowe przy prawym kliknieciu"""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.tree.focus(item)
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_double_click(self, event):
+        """Obsluga dwukliku - CAD viewer lub edycja ilosci"""
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+
+        col = self.tree.identify_column(event.x)
+
+        # Kolumna qty (#4) - edycja ilosci
+        if col == "#4":
+            self._edit_quantity(event)
+            return
+
+        # Inne kolumny - otwierz CAD viewer
+        try:
+            idx = int(item)
+            if 0 <= idx < len(self.parts):
+                filepath = self.parts[idx].get('filepath', '')
+                if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
+                    self._open_cad_viewer(filepath)
+                else:
+                    messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
+        except (ValueError, TypeError):
+            pass
+
+    def _context_preview_cad(self):
+        """Podglad CAD dla zaznaczonego detalu"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+
+        try:
+            idx = int(selection[0])
+            if 0 <= idx < len(self.parts):
+                filepath = self.parts[idx].get('filepath', '')
+                if filepath and Path(filepath).exists() and filepath.lower().endswith('.dxf'):
+                    self._open_cad_viewer(filepath)
+                else:
+                    messagebox.showinfo("Info", "Brak pliku DXF dla tego detalu")
+        except (ValueError, TypeError):
+            pass
+
+    def _context_edit_cad(self):
+        """Edycja CAD dla zaznaczonego detalu"""
+        # Taka sama jak podglad (viewer ma tryb edycji)
+        self._context_preview_cad()
+
+    def _open_cad_viewer(self, filepath: str):
+        """Otworz CAD 2D Viewer dla pliku DXF"""
+        try:
+            from cad import open_cad_viewer
+            open_cad_viewer(self.winfo_toplevel(), filepath=filepath)
+        except ImportError as e:
+            logger.warning(f"CAD viewer not available: {e}")
+            messagebox.showerror("Blad", "Modul CAD 2D Viewer nie jest dostepny")
+        except Exception as e:
+            logger.error(f"Error opening CAD viewer: {e}")
+            messagebox.showerror("Blad", f"Nie mozna otworzyc viewera: {e}")
 
     def _remove_selected(self):
         """Usuń zaznaczone pozycje"""
@@ -1973,11 +2053,26 @@ class OrderWindow(ctk.CTkToplevel):
             self.detailed_panel.set_parts(parts)
 
     def _on_detailed_parts_change(self, parts: List[Dict]):
-        """Callback - zmiana detali w panelu szczegolowym (edycja kosztow)"""
+        """Callback - zmiana detali w panelu szczegolowym (edycja kosztow).
+
+        WAŻNE: Używa RZECZYWISTYCH wartości kosztów z parts (material_cost, cutting_cost, etc.)
+        zamiast szacunków. Zapewnia spójność z przyciskiem 'Przelicz'.
+        """
         logger.info(f"[OrderWindow] Detailed parts changed: {len(parts)} items")
 
-        # Przelicz koszty z listy detali
-        total_lm = 0.0
+        # Pobierz parametry z params_panel
+        params = {}
+        if hasattr(self, 'params_panel'):
+            try:
+                params = self.params_panel.get_params()
+            except:
+                pass
+
+        # Sumuj RZECZYWISTE koszty z parts (źródło prawdy)
+        total_material = 0.0
+        total_cutting = 0.0
+        total_foil = 0.0
+        total_piercing = 0.0
         total_bending = 0.0
         total_additional = 0.0
         total_weight = 0.0
@@ -1986,46 +2081,77 @@ class OrderWindow(ctk.CTkToplevel):
         for p in parts:
             qty = int(p.get('quantity', 1) or 1)
             total_qty += qty
-            total_lm += float(p.get('lm_cost', 0) or 0) * qty
+
+            # Używaj rzeczywistych składników kosztowych z parts
+            if params.get('include_material', True):
+                total_material += float(p.get('material_cost', 0) or 0) * qty
+            if params.get('include_cutting', True):
+                total_cutting += float(p.get('cutting_cost', 0) or 0) * qty
+            if params.get('include_foil', True):
+                total_foil += float(p.get('foil_cost', 0) or 0) * qty
+            if params.get('include_piercing', True):
+                total_piercing += float(p.get('piercing_cost', 0) or 0) * qty
+
             total_bending += float(p.get('bending_cost', 0) or 0) * qty
             total_additional += float(p.get('additional', 0) or 0) * qty
-            total_weight += float(p.get('weight', 0) or 0) * qty
+            total_weight += float(p.get('weight', p.get('weight_kg', 0)) or 0) * qty
 
-        # Oblicz subtotal i total
-        subtotal = total_lm + total_bending + total_additional
+        # Koszty operacyjne - z nestingu jeśli dostępny
+        total_operational = 0.0
+        nesting_sheets = 0
+        nesting_efficiency = 0.0
 
-        # Pobierz parametry narzutu z params_panel jeśli dostępny
-        markup_pct = 0.0
-        if hasattr(self, 'params_panel'):
-            try:
-                markup_pct = float(self.params_panel.get_params().get('markup_percent', 0) or 0)
-            except:
-                pass
+        if self.nesting_results and self.nesting_results.get('sheets'):
+            sheets = self.nesting_results.get('sheets', [])
+            nesting_sheets = len(sheets)
+            if params.get('include_operational', True):
+                sheet_handling_cost = 40.0  # PLN za arkusz
+                total_operational = nesting_sheets * sheet_handling_cost
+            # Oblicz średnią efektywność
+            efficiencies = [s.get('efficiency', 0.75) for s in sheets if s.get('efficiency')]
+            if efficiencies:
+                nesting_efficiency = sum(efficiencies) / len(efficiencies)
 
-        markup_value = subtotal * (markup_pct / 100.0)
-        total_cost = subtotal + markup_value
+        # Koszty dodatkowe z params_panel
+        technology_cost = float(params.get('technology_cost', 0) or 0)
+        packaging_cost = float(params.get('packaging_cost', 0) or 0)
+        transport_cost = float(params.get('transport_cost', 0) or 0)
 
-        # Aktualizuj summary panel
+        # Suma produkcji
+        subtotal = total_material + total_cutting + total_foil + total_piercing + total_operational
+
+        # Suma przed narzutem
+        base_total = subtotal + technology_cost + packaging_cost + transport_cost
+
+        # Narzut procentowy
+        markup_pct = float(params.get('markup_percent', 0) or 0)
+        markup_value = base_total * (markup_pct / 100.0)
+        total_cost = base_total + markup_value
+
+        # Aktualizuj summary panel z RZECZYWISTYMI wartościami
         cost_result = {
-            'material_cost': total_lm * 0.6,  # Szacuj 60% L+M to materiał
-            'cutting_cost': total_lm * 0.4,   # Szacuj 40% L+M to cięcie
-            'foil_cost': 0.0,
-            'piercing_cost': 0.0,
-            'operational_cost': total_additional,
+            'material_cost': total_material,
+            'cutting_cost': total_cutting,
+            'foil_cost': total_foil,
+            'piercing_cost': total_piercing,
+            'operational_cost': total_operational,
             'subtotal': subtotal,
-            'technology_cost': total_bending,
-            'packaging_cost': 0.0,
-            'transport_cost': 0.0,
+            'technology_cost': technology_cost,
+            'packaging_cost': packaging_cost,
+            'transport_cost': transport_cost,
             'markup_percent': markup_pct,
             'markup_value': markup_value,
             'total_cost': total_cost,
-            'total_sheets': self.nesting_results.get('total_sheets', 0),
-            'average_efficiency': self.nesting_results.get('average_efficiency', 0),
+            'total_sheets': nesting_sheets,
+            'average_efficiency': nesting_efficiency,
             'total_weight_kg': total_weight,
         }
 
         if hasattr(self, 'summary_panel'):
             self.summary_panel.update_costs(cost_result)
+
+        # Oblicz L+M dla statusu
+        total_lm = total_material + total_cutting + total_foil + total_piercing
 
         self.lbl_status.configure(
             text=f"Detali: {len(parts)} | Qty: {total_qty} | L+M: {total_lm:.2f} | Total: {total_cost:.2f} PLN"
@@ -2131,6 +2257,10 @@ class OrderWindow(ctk.CTkToplevel):
 
         # Przekaz wyniki do panelu (dla popup)
         self.results_panel.set_nesting_results(self.nesting_results)
+
+        # WAŻNE: Przekaż wyniki nestingu do detailed_panel (dla modeli alokacji)
+        if hasattr(self, 'detailed_panel') and self.detailed_panel:
+            self.detailed_panel.set_nesting_results(self.nesting_results)
 
         # Aktualizuj koszty
         if 'cost_result' in results:
@@ -2524,9 +2654,27 @@ class OrderWindow(ctk.CTkToplevel):
         return result
 
     def _generate_documents(self):
-        """Generuj dokumenty"""
+        """Generuj dokumenty dla zamówienia"""
         logger.info("[OrderWindow] Document generation requested")
-        self._show_message("info", "Dokumenty", "Generowanie dokumentów - w przygotowaniu")
+
+        try:
+            from documents.gui import DocumentGeneratorDialog
+
+            order_name = self.order_data.get('order_number', '') or f"#{self.order_id[:8]}"
+
+            dialog = DocumentGeneratorDialog(
+                self,
+                entity_id=self.order_id,
+                entity_type='order',
+                entity_name=order_name
+            )
+
+        except ImportError as e:
+            logger.error(f"[OrderWindow] Import error: {e}")
+            self._show_message("error", "Błąd", f"Moduł dokumentów nie jest dostępny: {e}")
+        except Exception as e:
+            logger.error(f"[OrderWindow] Error opening document generator: {e}")
+            self._show_message("error", "Błąd", f"Nie można otworzyć generatora dokumentów: {e}")
 
     def _load_order_data(self):
         """Wczytaj dane zamówienia"""
@@ -2608,6 +2756,10 @@ class OrderWindow(ctk.CTkToplevel):
             # Dodaj order_id do wyników dla viewera
             self.nesting_results['order_id'] = self.order_id
             self.results_panel.set_nesting_results(self.nesting_results)
+
+            # WAŻNE: Przekaż wyniki nestingu do detailed_panel (dla modeli alokacji)
+            if hasattr(self, 'detailed_panel') and self.detailed_panel:
+                self.detailed_panel.set_nesting_results(self.nesting_results)
 
         # Załaduj wyniki kosztów (jeśli są)
         cost_result = self.order_data.get('cost_result')
