@@ -558,11 +558,12 @@ class DetailedPartsPanel(ctk.CTkFrame):
         ("additional", "Add$", 50),
         ("weight", "Weight", 55),
         ("cutting_len", "Cut len", 65),
+        ("engraving_len", "Engrave", 60),  # Długość graweru [mm]
         ("total_unit", "Total/pc", 70),
     ]
 
     EDITABLE = ["name", "material", "thickness", "quantity",
-                "lm_cost", "bends", "bending_cost", "additional", "weight", "cutting_len"]
+                "lm_cost", "bends", "bending_cost", "additional", "weight", "cutting_len", "engraving_len"]
 
     # Kolory dla detali (cykliczne)
     PART_COLORS = [
@@ -1399,6 +1400,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
         qty = int(part.get('quantity', 1) or 1)
         bends = int(part.get('bends', 0) or 0)
         bending_cost_unit = float(part.get('bending_cost', 0) or 0)
+        engraving_len = float(part.get('engraving_len', 0) or 0)
 
         return (
             part.get('nr', ''),
@@ -1412,6 +1414,7 @@ class DetailedPartsPanel(ctk.CTkFrame):
             f"{part.get('additional', 0):.2f}",
             f"{part.get('weight', 0):.2f}",
             f"{part.get('cutting_len', 0):.0f}",
+            f"{engraving_len:.0f}" if engraving_len > 0 else "-",  # Engrave [mm]
             f"{part.get('total_unit', 0):.2f}",
         )
 

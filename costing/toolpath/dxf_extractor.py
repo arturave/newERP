@@ -37,6 +37,7 @@ class ToolpathStats:
     """Statistics extracted from DXF toolpath."""
     cut_length_mm: float = 0.0
     rapid_length_mm: float = 0.0
+    engraving_length_mm: float = 0.0  # Długość grawerowania z warstw marking
     pierce_count: int = 0
     contour_count: int = 0
     entity_counts: Dict[str, int] = field(default_factory=dict)
@@ -44,6 +45,8 @@ class ToolpathStats:
     occupied_area_mm2: float = 0.0
     net_area_mm2: float = 0.0
     bounding_box: Optional[Tuple[float, float, float, float]] = None  # (min_x, min_y, max_x, max_y)
+    marking_layers: List[str] = field(default_factory=list)  # Znalezione warstwy graweru
+    all_layers: List[str] = field(default_factory=list)  # Wszystkie warstwy w pliku
 
 
 @dataclass
@@ -436,16 +439,53 @@ def extract_toolpath_stats(dxf_path: str,
     # Track contours (closed shapes = 1 pierce each)
     contour_endpoints: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
 
+    # Track all layers and marking layers
+    all_layers_set = set()
+    marking_layers_set = set()
+    engraving_length = 0.0
+
     for entity in msp:
         layer = entity.dxf.layer
+        all_layers_set.add(layer)
 
         # Skip ignored layers
         if is_layer_ignored(layer, ignore_layers):
             continue
 
-        # Skip marking layers (they don't add to cutting time significantly)
-        if is_marking_layer(layer, marking_keywords):
-            continue
+        # Handle marking layers - track engraving length
+        is_marking = is_marking_layer(layer, marking_keywords)
+        if is_marking:
+            marking_layers_set.add(layer)
+            # Calculate engraving length from this entity
+            etype = entity.dxftype()
+            if etype == 'LINE':
+                start = entity.dxf.start
+                end = entity.dxf.end
+                dx = end.x - start.x
+                dy = end.y - start.y
+                engraving_length += math.sqrt(dx*dx + dy*dy)
+            elif etype == 'ARC':
+                radius = entity.dxf.radius
+                start_a = math.radians(entity.dxf.start_angle)
+                end_a = math.radians(entity.dxf.end_angle)
+                while end_a <= start_a:
+                    end_a += 2 * math.pi
+                engraving_length += radius * (end_a - start_a)
+            elif etype == 'CIRCLE':
+                engraving_length += 2 * math.pi * entity.dxf.radius
+            elif etype == 'LWPOLYLINE':
+                points = list(entity.get_points('xyb'))
+                for i in range(len(points) - 1):
+                    p1, p2 = points[i], points[i + 1]
+                    dx = p2[0] - p1[0]
+                    dy = p2[1] - p1[1]
+                    engraving_length += math.sqrt(dx*dx + dy*dy)
+                if entity.closed and len(points) >= 2:
+                    p1, p2 = points[-1], points[0]
+                    dx = p2[0] - p1[0]
+                    dy = p2[1] - p1[1]
+                    engraving_length += math.sqrt(dx*dx + dy*dy)
+            continue  # Skip adding to cutting stats
 
         etype = entity.dxftype()
         segments = []
@@ -549,6 +589,11 @@ def extract_toolpath_stats(dxf_path: str,
             width = max(xs) - min(xs)
             height = max(ys) - min(ys)
             stats.occupied_area_mm2 = width * height
+
+    # Add engraving stats
+    stats.engraving_length_mm = engraving_length
+    stats.marking_layers = sorted(list(marking_layers_set))
+    stats.all_layers = sorted(list(all_layers_set))
 
     return stats
 
@@ -663,3 +708,93 @@ def extract_motion_segments(dxf_path: str,
             contour_id += 1  # Next entity gets new contour_id
 
     return segments
+
+
+@dataclass
+class EngravingInfo:
+    """Information about engraving/marking in a DXF file."""
+    engraving_length_mm: float = 0.0
+    marking_layers: List[str] = field(default_factory=list)
+    all_layers: List[str] = field(default_factory=list)
+    has_engraving: bool = False
+
+
+def extract_engraving_info(dxf_path: str,
+                           marking_keywords: Optional[Set[str]] = None) -> EngravingInfo:
+    """
+    Extract engraving/marking information from a DXF file.
+
+    This is a lightweight function that only extracts engraving data,
+    useful for quick analysis after loading DXF files.
+
+    Args:
+        dxf_path: Path to DXF file
+        marking_keywords: Keywords to identify marking layers (default: standard keywords)
+
+    Returns:
+        EngravingInfo with engraving length and layer information
+    """
+    if not EZDXF_AVAILABLE:
+        return EngravingInfo()
+
+    if marking_keywords is None:
+        marking_keywords = DEFAULT_MARKING_KEYWORDS
+
+    info = EngravingInfo()
+    all_layers = set()
+    marking_layers = set()
+    engraving_length = 0.0
+
+    try:
+        doc = ezdxf.readfile(dxf_path)
+        msp = doc.modelspace()
+
+        for entity in msp:
+            layer = entity.dxf.layer
+            all_layers.add(layer)
+
+            if is_marking_layer(layer, marking_keywords):
+                marking_layers.add(layer)
+                etype = entity.dxftype()
+
+                # Calculate length
+                if etype == 'LINE':
+                    start = entity.dxf.start
+                    end = entity.dxf.end
+                    dx = end.x - start.x
+                    dy = end.y - start.y
+                    engraving_length += math.sqrt(dx*dx + dy*dy)
+
+                elif etype == 'ARC':
+                    radius = entity.dxf.radius
+                    start_a = math.radians(entity.dxf.start_angle)
+                    end_a = math.radians(entity.dxf.end_angle)
+                    while end_a <= start_a:
+                        end_a += 2 * math.pi
+                    engraving_length += radius * (end_a - start_a)
+
+                elif etype == 'CIRCLE':
+                    engraving_length += 2 * math.pi * entity.dxf.radius
+
+                elif etype == 'LWPOLYLINE':
+                    points = list(entity.get_points('xy'))
+                    for i in range(len(points) - 1):
+                        p1, p2 = points[i], points[i + 1]
+                        dx = p2[0] - p1[0]
+                        dy = p2[1] - p1[1]
+                        engraving_length += math.sqrt(dx*dx + dy*dy)
+                    if entity.closed and len(points) >= 2:
+                        p1, p2 = points[-1], points[0]
+                        dx = p2[0] - p1[0]
+                        dy = p2[1] - p1[1]
+                        engraving_length += math.sqrt(dx*dx + dy*dy)
+
+        info.engraving_length_mm = engraving_length
+        info.marking_layers = sorted(list(marking_layers))
+        info.all_layers = sorted(list(all_layers))
+        info.has_engraving = engraving_length > 0
+
+    except Exception as e:
+        logger.warning(f"Could not extract engraving info from {dxf_path}: {e}")
+
+    return info

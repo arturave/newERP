@@ -249,7 +249,149 @@ class PricingService:
     def get_import_history(self, import_type: str = None) -> List[Dict]:
         """Pobierz historię importów"""
         return self.repository.get_import_history(import_type)
-    
+
+    # ============================================================
+    # Piercing Rates
+    # ============================================================
+
+    def get_piercing_rates(self,
+                           material_type: str = None,
+                           thickness: float = None) -> List[Dict]:
+        """Pobierz stawki przebijania"""
+        return self.repository.get_all_piercing_rates(
+            material_type=material_type,
+            thickness=thickness
+        )
+
+    def get_piercing_rate(self, material_type: str, thickness: float) -> Optional[Dict]:
+        """Pobierz pojedynczą stawkę przebijania"""
+        return self.repository.get_piercing_rate(material_type, thickness)
+
+    def add_piercing_rate(self, data: Dict) -> Tuple[bool, str]:
+        """Dodaj stawkę przebijania"""
+        required = ['material_type', 'thickness']
+        for field in required:
+            if field not in data:
+                return False, f"Brak wymaganego pola: {field}"
+
+        success, result = self.repository.upsert_piercing_rate(data)
+        if success:
+            return True, "Dodano stawkę przebijania"
+        return False, result or "Błąd zapisu"
+
+    def update_piercing_rate(self, rate_id: str, data: Dict) -> Tuple[bool, str]:
+        """Aktualizuj stawkę przebijania"""
+        data['id'] = rate_id
+        success, result = self.repository.upsert_piercing_rate(data)
+        if success:
+            return True, "Zaktualizowano stawkę"
+        return False, result or "Błąd aktualizacji"
+
+    def delete_piercing_rate(self, rate_id: str) -> Tuple[bool, str]:
+        """Usuń stawkę przebijania"""
+        if self.repository.delete_piercing_rate(rate_id):
+            return True, "Usunięto stawkę"
+        return False, "Błąd usuwania"
+
+    def get_piercing_material_types(self) -> List[str]:
+        """Pobierz listę typów materiałów dla piercing"""
+        return self.repository.get_piercing_material_types()
+
+    # ============================================================
+    # Foil Removal Rates
+    # ============================================================
+
+    def get_foil_rates(self, material_type: str = None) -> List[Dict]:
+        """Pobierz stawki zdejmowania folii"""
+        return self.repository.get_all_foil_rates(material_type=material_type)
+
+    def get_foil_rate(self, material_type: str, max_thickness: float = None) -> Optional[Dict]:
+        """Pobierz pojedynczą stawkę zdejmowania folii"""
+        return self.repository.get_foil_rate(material_type, max_thickness)
+
+    def add_foil_rate(self, data: Dict) -> Tuple[bool, str]:
+        """Dodaj stawkę zdejmowania folii"""
+        required = ['material_type']
+        for field in required:
+            if field not in data:
+                return False, f"Brak wymaganego pola: {field}"
+
+        success, result = self.repository.upsert_foil_rate(data)
+        if success:
+            return True, "Dodano stawkę folii"
+        return False, result or "Błąd zapisu"
+
+    def update_foil_rate(self, rate_id: str, data: Dict) -> Tuple[bool, str]:
+        """Aktualizuj stawkę zdejmowania folii"""
+        data['id'] = rate_id
+        success, result = self.repository.upsert_foil_rate(data)
+        if success:
+            return True, "Zaktualizowano stawkę"
+        return False, result or "Błąd aktualizacji"
+
+    def delete_foil_rate(self, rate_id: str) -> Tuple[bool, str]:
+        """Usuń stawkę zdejmowania folii"""
+        if self.repository.delete_foil_rate(rate_id):
+            return True, "Usunięto stawkę"
+        return False, "Błąd usuwania"
+
+    def get_foil_material_types(self) -> List[str]:
+        """Pobierz listę typów materiałów dla folii"""
+        return self.repository.get_foil_material_types()
+
+    # ============================================================
+    # Engraving Rates
+    # ============================================================
+
+    def get_engraving_rates(self, gas: str = None) -> List[Dict]:
+        """Pobierz stawki grawerowania"""
+        return self.repository.get_all_engraving_rates(gas=gas)
+
+    def get_engraving_rate(self, gas: str = 'N', power_percent: float = None) -> Optional[Dict]:
+        """Pobierz pojedynczą stawkę grawerowania"""
+        return self.repository.get_engraving_rate(gas, power_percent)
+
+    def get_default_engraving_rate(self) -> Optional[Dict]:
+        """Pobierz domyślną stawkę grawerowania"""
+        return self.repository.get_default_engraving_rate()
+
+    def get_engraving_price_per_meter(self, gas: str = 'N') -> Optional[float]:
+        """Pobierz cenę za metr grawerowania"""
+        rate = self.repository.get_default_engraving_rate()
+        if rate:
+            return rate.get('price_per_meter')
+        return None
+
+    def add_engraving_rate(self, data: Dict) -> Tuple[bool, str]:
+        """Dodaj stawkę grawerowania"""
+        required = ['name', 'engraving_speed']
+        for field in required:
+            if field not in data:
+                return False, f"Brak wymaganego pola: {field}"
+
+        success, result = self.repository.upsert_engraving_rate(data)
+        if success:
+            return True, "Dodano stawkę grawerowania"
+        return False, result or "Błąd zapisu"
+
+    def update_engraving_rate(self, rate_id: str, data: Dict) -> Tuple[bool, str]:
+        """Aktualizuj stawkę grawerowania"""
+        data['id'] = rate_id
+        success, result = self.repository.upsert_engraving_rate(data)
+        if success:
+            return True, "Zaktualizowano stawkę"
+        return False, result or "Błąd aktualizacji"
+
+    def delete_engraving_rate(self, rate_id: str) -> Tuple[bool, str]:
+        """Usuń stawkę grawerowania"""
+        if self.repository.delete_engraving_rate(rate_id):
+            return True, "Usunięto stawkę"
+        return False, "Błąd usuwania"
+
+    def get_engraving_gas_types(self) -> List[str]:
+        """Pobierz listę typów gazu dla grawerowania"""
+        return self.repository.get_engraving_gas_types()
+
     # ============================================================
     # Cost Calculation Helpers
     # ============================================================
@@ -295,7 +437,25 @@ class PricingService:
             return 0.0
         
         return cutting_length_m * price_per_m
-    
+
+    def calculate_engraving_cost(self, engraving_length_m: float, gas: str = 'N') -> float:
+        """
+        Oblicz koszt grawerowania.
+
+        Args:
+            engraving_length_m: Długość grawerowania [m]
+            gas: Typ gazu (domyślnie N - azot)
+
+        Returns:
+            Koszt [PLN]
+        """
+        price_per_m = self.get_engraving_price_per_meter(gas)
+        if price_per_m is None:
+            logger.warning(f"No engraving price for gas {gas}")
+            return 0.0
+
+        return engraving_length_m * price_per_m
+
     def calculate_total_cost(self, material: str, thickness: float,
                               weight_kg: float, cutting_length_m: float,
                               format: str = '1500x3000', gas: str = 'N') -> Dict:
